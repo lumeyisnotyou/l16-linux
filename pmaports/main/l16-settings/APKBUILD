@@ -35,5 +35,5 @@ package() {
 	install -Dm644 org.l16linux.gschema.xml -t "$pkgdir"/usr/share/glib-2.0/schemas
 }
 sha512sums="
-e30e3d61b66a9a11b3bce55a1f5c0bfdbf94035b4c0778532ec3a6ceec662fdbace2815af9858736ce942d23c630ed65dc3bcbf7e17563b655d55f4c6bb545b1  l16-settings-src.tar.gz
+ad90bd04d433fed42af7c7df272b8a41b4190cd97aa228947cde6dad77e5458ff3afed8b8ab741b289e92b2327801fc93baccdf40a16909ba5bb0259b9bd9b96  l16-settings-src.tar.gz
 "
