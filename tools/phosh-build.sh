@@ -26,7 +26,15 @@ open(p, "w").write(s)
 EOF
 scp -q "$PKG"/APKBUILD "$PKG"/*.patch "$PKG"/phosh.trigger \
   "$VM":.local/var/pmbootstrap/cache_git/pmaports/temp/phosh/
-ssh "$VM" 'PATH=$HOME/.local/bin:$PATH pmbootstrap -y build --arch aarch64 phosh' 2>&1 | tail -25
+# (not piped into tail: that would hide pmbootstrap's exit status and report a failed build as done)
+LOG=$(mktemp)
+if ! ssh "$VM" 'PATH=$HOME/.local/bin:$PATH pmbootstrap -y build --arch aarch64 phosh' > "$LOG" 2>&1; then
+	tail -40 "$LOG"
+	echo "BUILD FAILED (the compiler's errors are above; the full log is $LOG)" >&2
+	exit 1
+fi
+tail -6 "$LOG"
+rm -f "$LOG"
 mkdir -p "$HOME/phosh-build"
 scp -q "$VM":.local/var/pmbootstrap/packages/v26.06/aarch64/phosh-0.55.0-*.apk "$HOME/phosh-build/"
 ls -la "$HOME/phosh-build/"

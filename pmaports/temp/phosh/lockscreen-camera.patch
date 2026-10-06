@@ -41,6 +41,163 @@ index 0000000..339d480
 +    <method name="Open"/>
 +  </interface>
 +</node>
+diff --git a/src/exit-strip.c b/src/exit-strip.c
+new file mode 100644
+index 0000000..28962df
+--- /dev/null
++++ b/src/exit-strip.c
+@@ -0,0 +1,124 @@
++/*
++ * Copyright (C) 2026 lumey
++ *
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#define G_LOG_DOMAIN "phosh-exit-strip"
++
++#include "phosh-config.h"
++
++#include "exit-strip.h"
++#include "layersurface-priv.h"
++
++#define EXIT_STRIP_HEIGHT 40   /* logical px: more than the home bar it covers */
++#define EXIT_SWIPE_MIN 30      /* logical px upward */
++
++/**
++ * PhoshExitStrip:
++ *
++ * (L16 downstream) A thin overlay surface along the bottom edge while the lock screen camera is
++ * up: it takes the place of the home bar, so a swipe up there means "leave the camera" (and
++ * so lock again) instead of opening the overview. Emits ::exit-requested.
++ */
++enum {
++  EXIT_REQUESTED,
++  N_SIGNALS
++};
++static guint signals[N_SIGNALS] = { 0 };
++
++struct _PhoshExitStrip {
++  PhoshLayerSurface parent;
++
++  GtkGesture       *drag;
++};
++
++G_DEFINE_TYPE (PhoshExitStrip, phosh_exit_strip, PHOSH_TYPE_LAYER_SURFACE)
++
++
++static void
++on_drag_end (PhoshExitStrip *self, double offset_x, double offset_y, GtkGestureDrag *gesture)
++{
++  if (offset_y < -EXIT_SWIPE_MIN)
++    g_signal_emit (self, signals[EXIT_REQUESTED], 0);
++}
++
++
++static void
++phosh_exit_strip_constructed (GObject *object)
++{
++  PhoshExitStrip *self = PHOSH_EXIT_STRIP (object);
++  GtkWidget *handle;
++
++  G_OBJECT_CLASS (phosh_exit_strip_parent_class)->constructed (object);
++
++  gtk_style_context_add_class (gtk_widget_get_style_context (GTK_WIDGET (self)),
++                               "phosh-exit-strip");
++
++  handle = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  gtk_widget_set_halign (handle, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (handle, GTK_ALIGN_CENTER);
++  gtk_style_context_add_class (gtk_widget_get_style_context (handle), "phosh-exit-strip-handle");
++  gtk_widget_set_visible (handle, TRUE);
++  gtk_container_add (GTK_CONTAINER (self), handle);
++
++  self->drag = gtk_gesture_drag_new (GTK_WIDGET (self));
++  gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (self->drag), FALSE);
++  g_signal_connect_swapped (self->drag, "drag-end", G_CALLBACK (on_drag_end), self);
++}
++
++
++static void
++phosh_exit_strip_finalize (GObject *object)
++{
++  PhoshExitStrip *self = PHOSH_EXIT_STRIP (object);
++
++  g_clear_object (&self->drag);
++
++  G_OBJECT_CLASS (phosh_exit_strip_parent_class)->finalize (object);
++}
++
++
++static void
++phosh_exit_strip_class_init (PhoshExitStripClass *klass)
++{
++  GObjectClass *object_class = G_OBJECT_CLASS (klass);
++
++  object_class->constructed = phosh_exit_strip_constructed;
++  object_class->finalize = phosh_exit_strip_finalize;
++
++  /**
++   * PhoshExitStrip::exit-requested:
++   *
++   * The user swiped up on the strip
++   */
++  signals[EXIT_REQUESTED] = g_signal_new ("exit-requested",
++                                          G_TYPE_FROM_CLASS (klass),
++                                          G_SIGNAL_RUN_LAST,
++                                          0, NULL, NULL, NULL,
++                                          G_TYPE_NONE, 0);
++}
++
++
++static void
++phosh_exit_strip_init (PhoshExitStrip *self)
++{
++}
++
++
++GtkWidget *
++phosh_exit_strip_new (struct zwlr_layer_shell_v1 *layer_shell, struct wl_output *wl_output)
++{
++  return g_object_new (PHOSH_TYPE_EXIT_STRIP,
++                       "layer-shell", layer_shell,
++                       "wl-output", wl_output,
++                       "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                 ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
++                                 ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
++                       "layer", ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
++                       "kbd-interactivity", FALSE,
++                       "exclusive-zone", -1,
++                       "height", EXIT_STRIP_HEIGHT,
++                       "namespace", "phosh exit strip",
++                       NULL);
++}
+diff --git a/src/exit-strip.h b/src/exit-strip.h
+new file mode 100644
+index 0000000..5bf6b86
+--- /dev/null
++++ b/src/exit-strip.h
+@@ -0,0 +1,21 @@
++/*
++ * Copyright (C) 2026 lumey
++ *
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++#pragma once
++
++#include "layersurface.h"
++#include "wlr-layer-shell-unstable-v1-client-protocol.h"
++
++G_BEGIN_DECLS
++
++#define PHOSH_TYPE_EXIT_STRIP (phosh_exit_strip_get_type ())
++
++G_DECLARE_FINAL_TYPE (PhoshExitStrip, phosh_exit_strip, PHOSH, EXIT_STRIP, PhoshLayerSurface)
++
++GtkWidget *phosh_exit_strip_new (struct zwlr_layer_shell_v1 *layer_shell,
++                                 struct wl_output           *wl_output);
++
++G_END_DECLS
 diff --git a/src/lockscreen-camera-manager.c b/src/lockscreen-camera-manager.c
 new file mode 100644
 index 0000000..63059ca
@@ -669,11 +826,90 @@ index 06c9b84..0da7627 100644
 +void phosh_lockscreen_manager_wakeup            (PhoshLockscreenManager *self);
 +
  G_END_DECLS
+diff --git a/src/lockscreen.c b/src/lockscreen.c
+index 056fa76..396d576 100644
+--- a/src/lockscreen.c
++++ b/src/lockscreen.c
+@@ -15,6 +15,7 @@
+ #include "keypad.h"
+ #include "layersurface-priv.h"
+ #include "lockscreen-bg.h"
++#include "lockscreen-camera-manager.h"
+ #include "lockscreen-priv.h"
+ #include "notifications/notify-manager.h"
+ #include "notifications/notification-frame.h"
+@@ -100,6 +101,7 @@ typedef struct {
+   GtkWidget          *lbl_unlock_status;
+   GtkWidget          *btn_submit;
+   GtkWidget          *btn_keyboard;
++  GtkWidget          *btn_camera;
+   guint idle_timer;
+   gint64 last_input;
+   PhoshAuth          *auth;
+@@ -208,6 +210,17 @@ on_swipe_gesture_begin (PhoshLockscreen  *self,
+ }
+ 
+ 
++static void
++on_camera_clicked (PhoshLockscreen *self)
++{
++  PhoshLockscreenCameraManager *manager;
++
++  manager = phosh_shell_get_lockscreen_camera_manager (phosh_shell_get_default ());
++  if (manager)
++    phosh_lockscreen_camera_manager_open (manager);
++}
++
++
+ static void
+ phosh_lockscreen_map (GtkWidget *widget)
+ {
+@@ -218,6 +231,15 @@ phosh_lockscreen_map (GtkWidget *widget)
+ 
+   phosh_layer_surface_set_stacked_below (PHOSH_LAYER_SURFACE (priv->background),
+                                          PHOSH_LAYER_SURFACE (self));
++
++  /* the camera button only when the lock screen camera is on and the camera fit for it */
++  {
++    PhoshLockscreenCameraManager *manager;
++
++    manager = phosh_shell_get_lockscreen_camera_manager (phosh_shell_get_default ());
++    gtk_widget_set_visible (priv->btn_camera,
++                            manager && phosh_lockscreen_camera_manager_available (manager));
++  }
+ }
+ 
+ 
+@@ -1170,6 +1192,8 @@ phosh_lockscreen_class_init (PhoshLockscreenClass *klass)
+                                                 long_press_del_gesture);
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_submit);
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_keyboard);
++  gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_camera);
++  gtk_widget_class_bind_template_callback (widget_class, on_camera_clicked);
+ 
+   gtk_widget_class_bind_template_callback (widget_class, delete_button_clicked_cb);
+   gtk_widget_class_bind_template_callback (widget_class, input_changed_cb);
 diff --git a/src/meson.build b/src/meson.build
-index 7e11919..a335f75 100644
+index 7e11919..160127d 100644
 --- a/src/meson.build
 +++ b/src/meson.build
-@@ -339,6 +339,7 @@ phosh_headers = files(
+@@ -148,6 +148,7 @@ phosh_tool_headers = files(
+   'emergency-contact-row.h',
+   'emergency-contact.h',
+   'emergency-menu.h',
++  'exit-strip.h',
+   'end-session-dialog.h',
+   'fading-label.h',
+   'favorite-list-model.h',
+@@ -234,6 +235,7 @@ phosh_tool_sources = files(
+   'emergency-contact-row.c',
+   'emergency-contact.c',
+   'emergency-menu.c',
++  'exit-strip.c',
+   'end-session-dialog.c',
+   'fading-label.c',
+   'favorite-list-model.c',
+@@ -339,6 +341,7 @@ phosh_headers = files(
    'location-info.h',
    'location-manager.h',
    'lockscreen-bg.h',
@@ -681,7 +917,7 @@ index 7e11919..a335f75 100644
    'metainfo-cache.h',
    'monitor-manager.h',
    'network-auth-manager.h',
-@@ -408,6 +409,7 @@ phosh_sources = files(
+@@ -408,6 +411,7 @@ phosh_sources = files(
    'location-info.c',
    'location-manager.c',
    'lockscreen-bg.c',
@@ -711,28 +947,31 @@ index b62282f..6654481 100644
  void                 phosh_shell_enable_power_save (PhoshShell *self, gboolean enable);
  gboolean             phosh_shell_started_by_display_manager(PhoshShell *self);
 diff --git a/src/shell.c b/src/shell.c
-index 9ddb87d..f3cd4cf 100644
+index 9ddb87d..3b9ddd2 100644
 --- a/src/shell.c
 +++ b/src/shell.c
-@@ -30,6 +30,7 @@
+@@ -30,6 +30,9 @@
  #include "brightness-manager.h"
  #include "drag-surface.h"
  #include "debug-control.h"
++#include "exit-strip.h"
++#include "layersurface-priv.h"
 +#include "lockscreen-camera-manager.h"
  #include "shell-priv.h"
  #include "app-tracker.h"
  #include "battery-info.h"
-@@ -201,6 +202,9 @@ typedef struct {
+@@ -201,6 +204,10 @@ typedef struct {
    PhoshMprisManager          *mpris_manager;
    PhoshBrightnessManager     *brightness_manager;
    PhoshDebugControl          *debug_control;
 +  PhoshLockscreenCameraManager *lockscreen_camera_manager;
 +  PhoshDragSurfaceDragMode    saved_home_drag_mode; /* while the camera is over the lock */
 +  gboolean                    camera_over_lock;
++  PhoshExitStrip             *exit_strip;
  
    /* sensors */
    PhoshSensorProxyManager    *sensor_proxy_manager;
-@@ -260,6 +264,10 @@ update_top_level_layer (PhoshShell *self)
+@@ -260,6 +267,10 @@ update_top_level_layer (PhoshShell *self)
    if (priv->top_panel == NULL)
      return;
  
@@ -743,7 +982,7 @@ index 9ddb87d..f3cd4cf 100644
    g_return_if_fail (PHOSH_IS_TOP_PANEL (priv->top_panel));
    state = phosh_shell_get_state (self);
  
-@@ -595,6 +603,7 @@ phosh_shell_dispose (GObject *object)
+@@ -595,6 +606,7 @@ phosh_shell_dispose (GObject *object)
  
    /* dispose managers in opposite order of declaration */
    g_clear_object (&priv->debug_control);
@@ -751,7 +990,7 @@ index 9ddb87d..f3cd4cf 100644
    g_clear_object (&priv->brightness_manager);
    g_clear_object (&priv->mpris_manager);
    g_clear_object (&priv->connectivity_manager);
-@@ -873,6 +882,9 @@ setup_idle_cb (PhoshShell *self)
+@@ -873,6 +885,9 @@ setup_idle_cb (PhoshShell *self)
                              G_CALLBACK (on_pb_long_press),
                              self);
  
@@ -761,7 +1000,7 @@ index 9ddb87d..f3cd4cf 100644
    priv->notify_manager = phosh_notify_manager_get_default ();
    g_signal_connect_object (priv->notify_manager,
                             "new-notification",
-@@ -1821,6 +1833,71 @@ phosh_shell_get_lockscreen_manager (PhoshShell *self)
+@@ -1821,6 +1836,95 @@ phosh_shell_get_lockscreen_manager (PhoshShell *self)
    return priv->lockscreen_manager;
  }
  
@@ -780,6 +1019,16 @@ index 9ddb87d..f3cd4cf 100644
 +  g_return_val_if_fail (PHOSH_IS_SHELL (self), NULL);
 +  priv = phosh_shell_get_instance_private (self);
 +  return priv->lockscreen_camera_manager;
++}
++
++
++static void
++on_exit_requested (PhoshShell *self)
++{
++  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
++
++  g_debug ("Lock screen camera: exit swipe");
++  phosh_lockscreen_camera_manager_close_camera (priv->lockscreen_camera_manager);
 +}
 +
 +
@@ -810,6 +1059,10 @@ index 9ddb87d..f3cd4cf 100644
 +      phosh_home_set_state (PHOSH_HOME (priv->home), PHOSH_HOME_STATE_FOLDED);
 +      priv->saved_home_drag_mode = phosh_drag_surface_get_drag_mode (priv->home);
 +      phosh_drag_surface_set_drag_mode (priv->home, PHOSH_DRAG_SURFACE_DRAG_MODE_NONE);
++      /* and below the windows, like the top panel: the fullscreen camera then covers it and no
++       * touch reaches it (the drag mode alone is reset when the home's drag state changes) */
++      phosh_layer_surface_set_layer (PHOSH_LAYER_SURFACE (priv->home), ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM);
++      phosh_layer_surface_wl_surface_commit (PHOSH_LAYER_SURFACE (priv->home));
 +    }
 +    if (priv->top_panel) {
 +      /* Not hidden: a drag surface that is unmapped and mapped again comes back unfolded and
@@ -817,19 +1070,98 @@ index 9ddb87d..f3cd4cf 100644
 +      phosh_top_panel_fold (PHOSH_TOP_PANEL (priv->top_panel));
 +      phosh_top_panel_set_layer (PHOSH_TOP_PANEL (priv->top_panel), ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM);
 +    }
++    /* the bottom edge is the way out: a swipe up there closes the camera and locks again */
++    priv->exit_strip = PHOSH_EXIT_STRIP (phosh_exit_strip_new (
++                                           phosh_wayland_get_zwlr_layer_shell_v1 (phosh_wayland_get_default ()),
++                                           priv->primary_monitor->wl_output));
++    g_signal_connect_swapped (priv->exit_strip, "exit-requested", G_CALLBACK (on_exit_requested), self);
++    gtk_widget_set_visible (GTK_WIDGET (priv->exit_strip), TRUE);
 +    priv->camera_over_lock = TRUE;
 +    phosh_lockscreen_manager_set_stepped_aside (priv->lockscreen_manager, TRUE);
 +  } else {
 +    /* the lock screen first */
 +    phosh_lockscreen_manager_set_stepped_aside (priv->lockscreen_manager, FALSE);
++    g_clear_pointer (&priv->exit_strip, phosh_cp_widget_destroy);
 +    priv->camera_over_lock = FALSE;
 +    /* the panel back to its own layer (the lock screen's overlay) */
 +    update_top_level_layer (self);
-+    if (priv->home)
++    if (priv->home) {
++      phosh_layer_surface_set_layer (PHOSH_LAYER_SURFACE (priv->home), ZWLR_LAYER_SHELL_V1_LAYER_TOP);
++      phosh_layer_surface_wl_surface_commit (PHOSH_LAYER_SURFACE (priv->home));
 +      phosh_drag_surface_set_drag_mode (priv->home, priv->saved_home_drag_mode);
++    }
 +  }
 +}
 +
  /**
   * phosh_shell_get_mode_manager:
   * @self: The shell singleton
+diff --git a/src/stylesheet/common.css b/src/stylesheet/common.css
+index 6655188..4781d6d 100644
+--- a/src/stylesheet/common.css
++++ b/src/stylesheet/common.css
+@@ -1288,3 +1288,25 @@ levelbar trough {
+ calendar:selected {
+   background-color: @theme_selected_bg_color;
+ }
++
++/* L16: the exit strip of the lock screen camera */
++.phosh-exit-strip {
++  background-color: transparent;
++}
++
++.phosh-exit-strip-handle {
++  min-width: 120px;
++  min-height: 4px;
++  border-radius: 2px;
++  background-color: rgba(255, 255, 255, 0.6);
++  margin-top: 12px;
++  margin-bottom: 12px;
++}
++
++/* L16: the camera button on the lock screen */
++.phosh-lockscreen-camera {
++  min-width: 56px;
++  min-height: 56px;
++  padding: 0;
++  border-radius: 28px;
++}
+diff --git a/src/ui/lockscreen.ui b/src/ui/lockscreen.ui
+index cd4ac56..aca318a 100644
+--- a/src/ui/lockscreen.ui
++++ b/src/ui/lockscreen.ui
+@@ -103,6 +103,34 @@
+                     <property name="pack-type">end</property>
+                   </packing>
+                 </child>
++                <child>
++                  <object class="GtkButton" id="btn_camera">
++                    <property name="visible">0</property>
++                    <property name="halign">end</property>
++                    <property name="valign">end</property>
++                    <property name="margin">12</property>
++                    <signal name="clicked" handler="on_camera_clicked" swapped="yes"/>
++                    <child>
++                      <object class="GtkImage">
++                        <property name="visible">1</property>
++                        <property name="icon-name">camera-photo-symbolic</property>
++                        <property name="pixel-size">32</property>
++                      </object>
++                    </child>
++                    <style>
++                      <class name="phosh-lockscreen-camera"/>
++                      <class name="circular"/>
++                    </style>
++                    <child internal-child="accessible">
++                      <object class="AtkObject">
++                        <property name="AtkObject::accessible-name" translatable="yes">Camera</property>
++                      </object>
++                    </child>
++                  </object>
++                  <packing>
++                    <property name="pack-type">end</property>
++                  </packing>
++                </child>
+                 <child type="center">
+                   <object class="GtkBox" id="box_datetime">
+                     <property name="visible">1</property>

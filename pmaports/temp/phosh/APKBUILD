@@ -11,7 +11,7 @@
 maintainer="team/phosh <newbyte@postmarketos.org>"
 pkgname=phosh
 pkgver=0.55.0
-pkgrel=102
+pkgrel=103
 pkgdesc="Wayland shell for GNOME on mobile devices"
 # armhf: blocked by gnome-shell-schemas
 arch="all !armhf"
@@ -137,5 +137,5 @@ sha512sums="
 8bb798937339eaed1a85f5d6577b9c0ef48047300ccc8c241ffda23f834c7b8c50f8a87aa7cec42ad74aed6397fab6b2f0504284527d0bf2e85a35188c40f41b  use-after-free-fix.patch
 74972b2cca415a976b5e3d9b6f8cc7098e4321e0c38e18d2ccc1243912056d53d73ce65626e9bff7f32535b6e41dd9b31dc3c3237f516acd411fe7ac34e47e5c  extend-timeout-with-pid.patch
 dd279008d41eb5a3a2934affdbd16e0c727a03c8e0ad8662bae76342d8246e673b8b008ab6ec778c59fc1effec8e745ea9dc4c29fddc833b45b01b5f8a51bf2e  lockscreen-compact-keypad.patch
-1862b3a10d7d674720b61802f47bf76f2c2ba73e12895dde3429febaeffabcb6b3d0b86fe79786fe36562781a4efb58bc5eb0a1e7705838d5df0821a29f313aa  lockscreen-camera.patch
+40dfeaac491a0f2429abed5a58ee0210fa7120509ec66ef9e33aa082e276c3db849462ff6f18dcf22ea217fb47cbbfba2ea50dce43cfe12502edec75fcf7c618  lockscreen-camera.patch
 "
