@@ -1126,10 +1126,17 @@ class Touch:
 
     def ev(self, t, c, v):
         now = time.time()
-        os.write(self.fd, struct.pack("<llHHi", int(now), int((now % 1) * 1e6), t, c, v))
+        os.write(self.fd, struct.pack("<qqHHi", int(now), int((now % 1) * 1e6), t, c, v))  # 24 bytes: 64-bit time ("<l" is only 4 bytes)
 
     def syn(self):
         self.ev(EV_SYN, 0, 0)
+
+    # the camera is held in landscape, but a touch device with no output of its own is taken to be
+    # in the panel's native (portrait) orientation, so the compositor turns it by the panel's 270:
+    # a landscape (x, y) is sent as (MAXV - y, x)
+    @staticmethod
+    def native(x, y):
+        return MAXV - y, x
 
     def down(self, x, y):
         self.tid += 1
@@ -1140,6 +1147,7 @@ class Touch:
         self.syn()
 
     def move(self, x, y):
+        x, y = self.native(x, y)
         self.ev(EV_ABS, ABS_MT_POSITION_X, int(x))
         self.ev(EV_ABS, ABS_MT_POSITION_Y, int(y))
         self.ev(EV_ABS, ABS_X, int(x))
