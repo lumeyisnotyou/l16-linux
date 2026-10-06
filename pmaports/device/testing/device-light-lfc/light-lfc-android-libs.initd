@@ -3,8 +3,14 @@
 name="Light L16 camera libraries"
 description="Gather Light's renderer, Android's runtime and the factory calibration from the stock partitions"
 
-command=/usr/libexec/light-lfc-android-libs
-
 depend() {
 	need localmount msm-firmware-loader
+}
+
+# (a start(), not command=: it is a one-shot, which OpenRC reported as "crashed" for
+# having left no daemon)
+start() {
+	ebegin "Gathering the camera libraries"
+	/usr/libexec/light-lfc-android-libs
+	eend $?
 }
