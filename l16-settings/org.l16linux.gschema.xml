@@ -4,7 +4,12 @@
     <key name="default-camera" type="s">
       <default>'org.l16linux.Camera.desktop'</default>
       <summary>Default camera app</summary>
-      <description>The desktop id of the camera app that the gallery (and the lock screen) open: org.l16linux.Camera.desktop (Viewfinder) or org.l16linux.Nebula.desktop (Nebula).</description>
+      <description>The desktop id of the camera app that the gallery and the lock screen open. Any installed app whose desktop file declares X-L16-Camera=true can be chosen (Viewfinder is org.l16linux.Camera.desktop, Nebula org.l16linux.Nebula.desktop).</description>
+    </key>
+    <key name="lock-screen-camera" type="b">
+      <default>true</default>
+      <summary>Camera on the lock screen</summary>
+      <description>Whether the lock screen offers the default camera (a button on the lock screen, and the shutter button) without unlocking the phone. While it is open the phone stays locked, and the camera can only take photos and review the ones it took then.</description>
     </key>
   </schema>
 </schemalist>

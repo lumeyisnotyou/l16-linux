@@ -28,6 +28,8 @@ fn camera_group() -> adw::PreferencesGroup {
         .description("Opened by the gallery's camera button")
         .build();
     let settings = gio::Settings::new(SCHEMA);
+    // (the combo's handler below takes `settings`)
+    let switch_settings = settings.clone();
     let chosen = settings.string("default-camera").to_string();
     let cams = cameras::discover(installed_apps(), &chosen);
     let names: Vec<&str> = cams.iter().map(|c| c.name.as_str()).collect();
@@ -52,6 +54,14 @@ fn camera_group() -> adw::PreferencesGroup {
         });
     }
     group.add(&row);
+
+    // the lock screen camera on or off (phosh reads the same key)
+    let lock_row = adw::SwitchRow::builder()
+        .title("Camera on the lock screen")
+        .subtitle("Open the camera without unlocking the phone")
+        .build();
+    switch_settings.bind("lock-screen-camera", &lock_row, "active").build();
+    group.add(&lock_row);
     group
 }
 
