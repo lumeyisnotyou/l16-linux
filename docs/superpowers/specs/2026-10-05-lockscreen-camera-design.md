@@ -1,0 +1,160 @@
+# Lock-screen camera (design)
+
+Status: draft for review, 2026-10-05. Builds on the default-camera setting (commit 7129b93).
+
+## Goal
+
+From a locked L16, open the default camera in a moment, the way a camera should behave: a camera
+button on the lock screen, or a press of the hardware shutter, even with the screen off. The phone
+stays locked. Nothing but the camera is reachable until it is closed, and then the lock is back.
+
+## Decisions (from the user)
+
+- **Scope while locked: shoot, and review this session's shots.** No gallery, no settings, no
+  photo from before the lock screen camera opened.
+- **Trigger: the on-screen lock-screen button and the hardware shutter button.**
+- **The camera is the default camera** (`org.l16linux.camera default-camera`: Nebula or Viewfinder).
+- **A switch to turn it off** in L16 Settings.
+
+## Not in scope
+
+Full-quality review of locked shots, other apps over the lock, a quick-launch for anything but the
+camera, and upstreaming to phosh.
+
+## Background: how phosh 0.55 locks
+
+- The lock screen is not a compositor session lock. `PhoshLockscreen` (`src/lockscreen.c`) and
+  `PhoshLockshield` (`src/lockshield.c`, other outputs) are `OVERLAY`-layer layer-shell surfaces over
+  the windows, and while locked the panels are moved to the overlay layer too (`src/shell.c`,
+  `top_layer`).
+- `PhoshLockscreenManager` owns the locked state and mirrors it into `PhoshShell:locked`.
+- The stock `launcher-box` lock-screen plugin starts apps with `g_app_info_launch`
+  (`plugins/launcher-box/launcher-box.c`), but their windows stay under the overlay, so it can't show
+  a camera.
+- Windows are tracked by `PhoshToplevelManager` (`toplevel-added`, `toplevel-changed`, `closed`;
+  `phosh_toplevel_get_app_id`, `_is_activated`, `_is_fullscreen`).
+- New D-Bus services follow `src/debug-control.c`: an XML interface in `src/dbus/`, a manager that
+  calls `g_bus_own_name`.
+
+So the camera can only be shown by the lock screen stepping aside, and everything that makes that
+safe has to be done by phosh.
+
+## Architecture
+
+```
+ hardware shutter ──► l16-shutter (user service) ──┐
+ lock-screen button ──────────────────────────────┤  Open()
+                                                   ▼
+                          phosh: LockscreenCameraManager  (patch)
+                           │ reads default-camera, lock-screen-camera (gsettings)
+                           │ launches <camera>.desktop action "Locked"  ─► camera --locked
+                           │ watches PhoshToplevelManager for that app's window
+                           ▼
+              locked state "camera up": lock overlay + panels hidden,
+              gestures off; re-covers on any exit condition
+```
+
+### 1. Phosh patch (`pmaports/temp/phosh/lockscreen-camera.patch`, phosh r101)
+
+New object `PhoshLockscreenCameraManager`, owner of the D-Bus name `org.l16linux.Shell.LockscreenCamera`
+(object `/org/l16linux/Shell/LockscreenCamera`) with one method:
+
+- `Open()` (no arguments). It never takes an app id: the app is always resolved by phosh from
+  `default-camera`, and only if that desktop id is one of the two cameras (`org.l16linux.Camera.desktop`,
+  `org.l16linux.Nebula.desktop`). A caller can only ask for "the camera".
+
+`Open()` behavior:
+
+- **Unlocked:** launch the default camera normally (its plain `Exec`), and wake the display if blank.
+- **Locked, and `lock-screen-camera` on:** wake the display, launch the desktop action `Locked`
+  (`<camera> --locked`), start a 5 s watch for that app's toplevel to be mapped, activated and
+  fullscreen.
+- **Locked, and the key off:** do nothing (the screen is only woken).
+
+When the toplevel is up, enter the "camera over lock" state:
+
+- the lock screen and lock shields are hidden, but `locked` stays TRUE;
+- the top panel, the home bar and the overview are hidden, and the drag-surface gestures
+  (`drag-surface.c`: home, overview, notification shade, quick settings) are disabled, so the camera
+  can't be left for another app;
+- the power key still blanks the screen as usual.
+
+It re-covers (shows the lock screen and the panels again, restores the gestures) when any of these
+happens:
+
+- the toplevel unmaps (camera closed), loses activation, or leaves fullscreen;
+- another toplevel becomes activated or mapped;
+- the screen blanks (idle or power key), or the display is turned off;
+- the 5 s launch watch expires without the window (stays locked: a failed launch is never a bypass);
+- anything calls `lock` again.
+
+Failure rule: if the manager's state is ever inconsistent (the toplevel can't be found, a signal is
+missed), it re-covers. The default is locked.
+
+L16 additions to the lock screen: a camera button (`phosh-lockscreen-camera` CSS, bottom corner, shown only when
+`lock-screen-camera` is on and a camera is installed) calling the same code path as `Open()`.
+
+### 2. Shutter listener (`l16-shutter`, new small Rust package in this repo)
+
+- A user service, autostarted with the session (like `light-lfc-rotate.desktop`).
+- Reads the `gpio-keys` evdev device for `KEY_CAMERA` (212), as `nebula/src/input.rs` does (udev
+  already gives the logged-in user access).
+- On a press: if `$XDG_RUNTIME_DIR/l16-camera.front` exists (a camera app is in front and handles the
+  key itself), ignore it; otherwise call `Open()` on the session bus. Phosh decides what that means
+  when locked or not.
+- It carries no security decision: a caller of `Open()` can only ever get the default camera.
+
+### 3. Camera apps (`--locked`)
+
+Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
+
+- no gallery launch from the thumbnail, no settings, no system panel;
+- a strip of this session's shots: the preview frame kept at each shutter (not the processed photo,
+  since LRI decoding is slow), held in memory and dropped on exit;
+- the photos are saved as usual to `~/Pictures/L16`, so they appear in the gallery after unlock;
+- exits when the screen blanks (they already stop their streams then; with `--locked` they close, so
+  the lock comes back).
+
+### 4. Settings and schema
+
+- New key `org.l16linux.camera lock-screen-camera` (boolean, default true) in
+  `l16-settings/org.l16linux.gschema.xml`.
+- A switch "Camera on the lock screen" in L16 Settings' Camera group.
+- Phosh reads both keys through the schema source lookup used by the gallery (no abort when the
+  schema is missing: the feature is then off).
+
+## Security invariants (what must hold; each is tested)
+
+1. While in "camera over lock", no window other than the camera's is visible or reachable.
+2. No gesture, button or key combination leaves the camera for another app, the overview, the
+   shade or the quick settings.
+3. Any failure, timeout or ambiguity ends locked, with the lock screen shown.
+4. The shown app is only ever the default camera, chosen by phosh and never by a caller.
+5. The camera in locked mode cannot open the gallery or any previous photo.
+6. Unlocking is still only through the keypad/biometrics: the feature never sets `locked` to FALSE.
+
+## Risks
+
+- **Gestures and panels** are the main work and the main risk: an edge swipe on the overlay-layer
+  panels with no lock screen must not reach the overview. The test plan covers each gesture.
+- **A phosh patch** can break the lock screen; the session can be left unable to unlock. Mitigation:
+  the whole behavior sits behind `lock-screen-camera`, I build and test with an SSH session open, and
+  the device can go back to phosh r100 with `apk add phosh=0.55.0-r100`.
+- **The shutter** is read as a raw evdev device by two programs at once (the listener and the camera
+  app). Both only read; the front marker keeps them from both acting.
+- Phoc's behavior when the lock overlay is hidden (focus, which window is on top) is checked on the
+  device; if it differs from this model the design changes before more is built.
+
+## Test plan
+
+On the device, with SSH open: shutter from a blanked locked screen; the lock-screen button; all
+four edge swipes; the power key; the back/close paths; a camera that fails to start (stays locked);
+killing the camera (re-locks); another window open behind (must never show); the switch off; an
+unlocked shutter press; and the full unlock with the keypad after a locked shoot.
+
+## Build order
+
+1. Schema key and Settings switch (smallest, no phosh).
+2. Phosh patch, with a stand-in camera, tested on the device (the risky half).
+3. Camera apps' `--locked` mode.
+4. `l16-shutter`, and the lock-screen button.
