@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.l16linux.camera" path="/org/l16linux/camera/">
+    <key name="default-camera" type="s">
+      <default>'org.l16linux.Camera.desktop'</default>
+      <summary>Default camera app</summary>
+      <description>The desktop id of the camera app that the gallery (and the lock screen) open: org.l16linux.Camera.desktop (Viewfinder) or org.l16linux.Nebula.desktop (Nebula).</description>
+    </key>
+  </schema>
+</schemalist>

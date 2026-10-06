@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=L16 Settings
+Comment=Choose the L16's default camera and more
+Exec=l16-settings
+Icon=preferences-system-symbolic
+Categories=Settings;
+X-Purism-FormFactor=Workstation;Mobile;

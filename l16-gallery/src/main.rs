@@ -155,6 +155,21 @@ fn launch(desktop: &str, file: Option<&Path>) {
     }
 }
 
+const CAMERA_DEFAULT: &str = "org.l16linux.Camera.desktop";
+
+// the camera the settings app chose (org.l16linux.camera default-camera), read at each tap so a
+// change applies at once; the original Viewfinder when the schema isn't installed (Settings::new
+// would abort on that), the key is empty, or its app has gone
+fn default_camera() -> String {
+    let has_schema = gio::SettingsSchemaSource::default()
+        .and_then(|s| s.lookup("org.l16linux.camera", true))
+        .is_some();
+    let chosen = has_schema
+        .then(|| gio::Settings::new("org.l16linux.camera").string("default-camera").to_string())
+        .filter(|id| !id.is_empty() && gio::DesktopAppInfo::new(id).is_some());
+    chosen.unwrap_or_else(|| CAMERA_DEFAULT.to_string())
+}
+
 enum Done {
     Thumb(PathBuf),
     Quick(PathBuf, Result<lri::Picture, String>),
@@ -1036,8 +1051,8 @@ fn build(app: &gtk::Application) -> Rc<Gallery> {
     process.connect_clicked(move |_| a.process());
     let a = g.clone();
     delete.connect_clicked(move |_| a.delete());
-    camera.connect_clicked(|_| launch("org.l16linux.Camera.desktop", None));
-    grid_camera.connect_clicked(|_| launch("org.l16linux.Camera.desktop", None));
+    camera.connect_clicked(|_| launch(&default_camera(), None));
+    grid_camera.connect_clicked(|_| launch(&default_camera(), None));
 
     // on both of the viewer's pages: a tap, the swipe between photos and the pinch
     for (_, scroller) in &g.pages {

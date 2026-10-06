@@ -1,0 +1,39 @@
+# Maintainer: Riley <oreo4455@gmail.com>
+# Settings for the Light L16's own apps (which camera the gallery opens), and the gsettings
+# schema (org.l16linux.camera) they share. From this repository (pmaports/sync.sh packs
+# l16-settings/ into $pkgname-src.tar.gz here).
+pkgname=l16-settings
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Settings for the Light L16's own apps, and their shared gsettings schema"
+url="https://github.com/artillect/l16-linux"
+arch="aarch64"
+license="MIT"
+depends="libadwaita"
+makedepends="cargo cargo-auditable libadwaita-dev"
+install_if="l16-gallery"	# the gallery reads the schema (and falls back to Viewfinder without it)
+options="net !check"	# net: cargo fetches the crates in prepare()
+source="$pkgname-src.tar.gz"
+builddir="$srcdir/$pkgname"
+
+# pmbootstrap sets RUSTC_WRAPPER=/usr/bin/sccache on native builds without installing it
+unset RUSTC_WRAPPER
+
+prepare() {
+	default_prepare
+	cargo fetch --target="$CTARGET" --locked
+}
+
+build() {
+	cargo auditable build --frozen --release
+}
+
+package() {
+	install -Dm755 target/release/l16-settings "$pkgdir"/usr/bin/l16-settings
+	install -Dm644 org.l16linux.Settings.desktop -t "$pkgdir"/usr/share/applications
+	# (glib-compile-schemas runs from the glib-schemas trigger, as for any package's schema)
+	install -Dm644 org.l16linux.gschema.xml -t "$pkgdir"/usr/share/glib-2.0/schemas
+}
+sha512sums="
+0  l16-settings-src.tar.gz
+"

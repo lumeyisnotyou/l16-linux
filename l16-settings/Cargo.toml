@@ -1,0 +1,12 @@
+[package]
+name = "l16-settings"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Settings for the Light L16's own apps: which camera the gallery and lock screen open"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.8", features = ["v1_5"] }
+
+[profile.release]
+opt-level = 3
