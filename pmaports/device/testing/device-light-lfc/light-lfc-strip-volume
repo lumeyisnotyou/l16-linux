@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-# light-lfc-strip-volume: the touch strip as volume keys, except while the camera app
-# (l16-camera) is in front, which uses it for zoom (it marks that with l16-camera.front in
-# its runtime directory; the marker only counts while the app runs, in case it crashed). A swipe of a tenth of the strip is one key
+# light-lfc-strip-volume: the touch strip as volume keys, except while an app wants the strip
+# for itself (the camera apps use it for zoom). A swipe of a tenth of the strip is one key
 # press; the keys come from a uinput device, so the desktop handles them as it does the
 # volume button (its on-screen display included).
+#
+# Claiming the strip: any app can ask to keep it, whenever it likes, by putting a file named for
+# the app in l16-strip/ in its runtime directory ($XDG_RUNTIME_DIR/l16-strip/<name>) that holds
+# its PID, and removing the file when it no longer wants the strip. The volume keys are left alone
+# for as long as a claim exists whose process is still running (a claim that outlived a crashed
+# app doesn't count). The check is made when a touch starts, so a touch that began before a claim
+# finishes as volume, and one that began after it is the app's.
+#   echo $$ > "$XDG_RUNTIME_DIR/l16-strip/my-app"     # claim
+#   rm "$XDG_RUNTIME_DIR/l16-strip/my-app"            # let go
+# Older camera apps mark themselves with l16-camera.front instead; that still counts while a
+# process of the camera apps (CAMERA_COMMS) runs.
 import fcntl
 import glob
+import os
 import struct
 import time
 
@@ -13,6 +24,11 @@ EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
 SYN_REPORT, ABS_X, BTN_TOUCH = 0, 0, 330
 KEY_VOLUMEDOWN, KEY_VOLUMEUP = 114, 115
 STEP = 768 // 10
+
+# every user's claims (the service runs as root)
+CLAIMS = "/run/user/*/l16-strip/*"
+# the camera apps whose l16-camera.front marker counts as a claim
+CAMERA_COMMS = ("l16-camera", "nebula")
 
 UI_DEV_CREATE = 0x5501			# _IO('U', 1)
 UI_DEV_SETUP = 0x405c5503		# _IOW('U', 3, struct uinput_setup)
@@ -31,7 +47,7 @@ def strip():
 def camera_running():
 	for comm in glob.glob("/proc/[0-9]*/comm"):
 		try:
-			if open(comm).read().strip() == "l16-camera":
+			if open(comm).read().strip() in CAMERA_COMMS:
 				return True
 		except OSError:
 			pass
@@ -40,6 +56,31 @@ def camera_running():
 
 def camera_in_front():
 	return bool(glob.glob("/run/user/*/l16-camera.front")) and camera_running()
+
+
+def pid_alive(pid):
+	if pid <= 0:
+		return False
+	try:
+		os.kill(pid, 0)
+	except ProcessLookupError:
+		return False
+	except PermissionError:
+		pass	# it exists, it's just not ours
+	return True
+
+
+def claimed():
+	"""Does an app want the strip? (see the claims at the top)"""
+	for path in glob.glob(CLAIMS):
+		try:
+			with open(path) as f:
+				pid = int(f.read().split()[0])
+		except (OSError, ValueError, IndexError):
+			continue
+		if pid_alive(pid):
+			return True
+	return camera_in_front()
 
 
 def keyboard():
@@ -76,7 +117,7 @@ def main():
 				if anchor is None:
 					# a new touch (its position comes before the touch-down)
 					anchor = value
-					ignore = camera_in_front()
+					ignore = claimed()
 				elif not ignore and abs(value - anchor) >= STEP:
 					steps = abs(value - anchor) // STEP
 					press(ui, KEY_VOLUMEUP if value > anchor else KEY_VOLUMEDOWN, steps)
@@ -85,4 +126,5 @@ def main():
 				anchor = None
 
 
-main()
+if __name__ == "__main__":
+	main()
