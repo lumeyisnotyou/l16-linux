@@ -4,7 +4,7 @@
 # l16-settings/ into $pkgname-src.tar.gz here).
 pkgname=l16-settings
 pkgver=0.1.0
-pkgrel=0
+pkgrel=1
 pkgdesc="Settings for the Light L16's own apps, and their shared gsettings schema"
 url="https://github.com/artillect/l16-linux"
 arch="aarch64"
