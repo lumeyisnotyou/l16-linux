@@ -1,0 +1,53 @@
+# A fork's build: the kernel and device packages with pmbootstrap, kept as an artifact (the
+# .apk files, and the public half of the key they're signed with). build.yml needs the release
+# key and publishes to gh-pages, which only the main repository can do; this one signs with a key
+# pmbootstrap makes (L16_LOCAL_KEY, tools/ci/setup.sh), so a device has to trust that key:
+#   scp the .pub to /etc/apk/keys/ on the device, then apk add the .apk files.
+name: Build (fork)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "kernel/**"
+      - "pmaports/device/**"
+      - ".github/workflows/build-fork.yml"
+
+jobs:
+  build:
+    # not in the main repository: build.yml does this there
+    if: github.repository != 'artillect/l16-linux'
+    # native aarch64: the kernel builds without emulation
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pmbootstrap
+        env:
+          L16_LOCAL_KEY: "1"
+        run: |
+          sh tools/ci/setup.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the kernel and device packages
+        run: pmbootstrap -y build linux-light-lfc device-light-lfc
+
+      - name: Collect the packages
+        run: |
+          W=$HOME/.local/var/pmbootstrap
+          mkdir -p out
+          cp "$W"/packages/v26.06/aarch64/*.apk out/
+          cp "$W"/config_abuild/*.pub out/
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: l16-kernel-packages
+          path: out/
+          retention-days: 30
+
+      - name: pmbootstrap log
+        if: failure()
+        run: tail -n 200 "$HOME/.local/var/pmbootstrap/log.txt" || true

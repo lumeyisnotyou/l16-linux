@@ -3,7 +3,8 @@
 # itself, pmaports on the release channel, a config for light-lfc, and the package
 # signing key from $APK_SIGNING_KEY.
 set -eu
-: "${APK_SIGNING_KEY:?the package signing key (secret APK_SIGNING_KEY) is not set}"
+# L16_LOCAL_KEY=1 (the fork's build-only workflow): no release key, pmbootstrap makes its own
+[ -n "${L16_LOCAL_KEY:-}" ] || : "${APK_SIGNING_KEY:?the package signing key (secret APK_SIGNING_KEY) is not set}"
 PMB_VERSION=${PMB_VERSION:-3.11.1}
 CHANNEL=${CHANNEL:-v26.06}
 KEY_NAME=l16-linux@artillect-6ab9d2e0.rsa
@@ -40,15 +41,17 @@ user = user
 [mirrors]
 EOF
 
-# sign with the release key (the chroots' build user is uid 12345), and trust it
-pub="$REPO/pmaports/device/testing/device-light-lfc/$KEY_NAME.pub"
-sudo install -d -o 12345 -g 12345 "$W/config_abuild"
-printf '%s\n' "$APK_SIGNING_KEY" | sudo install -o 12345 -g 12345 -m 600 /dev/stdin "$W/config_abuild/$KEY_NAME"
-sudo install -o 12345 -g 12345 -m 644 "$pub" "$W/config_abuild/"
-echo "PACKAGER_PRIVKEY=\"/home/pmos/.abuild/$KEY_NAME\"" |
-	sudo install -o 12345 -g 12345 -m 644 /dev/stdin "$W/config_abuild/abuild.conf"
-sudo install -d "$W/config_apk_keys"
-sudo install -m 644 "$pub" "$W/config_apk_keys/"
+if [ -z "${L16_LOCAL_KEY:-}" ]; then
+	# sign with the release key (the chroots' build user is uid 12345), and trust it
+	pub="$REPO/pmaports/device/testing/device-light-lfc/$KEY_NAME.pub"
+	sudo install -d -o 12345 -g 12345 "$W/config_abuild"
+	printf '%s\n' "$APK_SIGNING_KEY" | sudo install -o 12345 -g 12345 -m 600 /dev/stdin "$W/config_abuild/$KEY_NAME"
+	sudo install -o 12345 -g 12345 -m 644 "$pub" "$W/config_abuild/"
+	echo "PACKAGER_PRIVKEY=\"/home/pmos/.abuild/$KEY_NAME\"" |
+		sudo install -o 12345 -g 12345 -m 644 /dev/stdin "$W/config_abuild/abuild.conf"
+	sudo install -d "$W/config_apk_keys"
+	sudo install -m 644 "$pub" "$W/config_apk_keys/"
+fi
 
 # the L16 packages into pmaports
 PATH=$HOME/.local/bin:$PATH bash "$REPO/pmaports/sync.sh"
