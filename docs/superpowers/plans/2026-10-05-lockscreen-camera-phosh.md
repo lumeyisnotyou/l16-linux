@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** From a locked L16, a lock-screen button (and a D-Bus `Open()` that the shutter listener will call in plan D) opens the default camera over the lock screen; the phone stays locked; a swipe up from the bottom edge, the power button, or the camera closing puts the lock screen back.
+**Goal:** From a locked L16, a lock-screen button (and a D-Bus `Open()` that the shutter listener will call in plan D) opens the default camera over the lock screen; the device stays locked; a swipe up from the bottom edge, the power button, or the camera closing puts the lock screen back.
 
 **Architecture:** One downstream phosh patch (`pmaports/temp/phosh/lockscreen-camera.patch`, phosh 0.55.0 r101): a new `PhoshLockscreenCameraManager` owns the D-Bus name `org.l16linux.Shell.LockscreenCamera` and a small state machine (idle → launching → over-lock) driven by `PhoshToplevelManager`; `PhoshShell` gets `phosh_shell_set_camera_over_lock()` which hides the lock screen (never clearing `locked`), hides the top panel, switches the home drag off and shows a new `PhoshExitStrip` along the bottom edge; the lock screen gets a camera button. The default camera comes from our gsettings key; the camera's `Locked` desktop action starts it (plan C makes the apps understand it).
 
@@ -20,9 +20,9 @@
 - Fail-safe: any unexpected state change re-covers (the default is locked).
 - Phosh is built **only** through pmaports: `pmaports/temp/phosh/APKBUILD` lists the patches, `pkgrel=101`; patch checksums are sha512 of the patch files; the other three patches stay unchanged and in their order.
 - Commits are authored as `lumey <46928172+lumeyisnotyou@users.noreply.github.com>` (repo-local config) and end with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Do not push without being asked. Packages built on the VM: `lumey@192.168.1.6`; device: `root@192.168.1.191`.
-- **The phone's session restarts to load a new phosh** (`rc-service greetd restart` logs the user out and back to the login screen). Ask the user first, every time, and tell them they will need their PIN. Never restart it while they may be using it. Keep an SSH session open while testing.
+- **The device's session restarts to load a new phosh** (`rc-service greetd restart` logs the user out and back to the login screen). Ask the user first, every time, and tell them they will need their PIN. Never restart it while they may be using it. Keep an SSH session open while testing.
 - Rollback is always: `apk add --allow-untrusted /tmp/phosh-r100.apk` (the baseline apk saved in Task 2) then `rc-service greetd restart`, or `apk add phosh=0.55.0-r100` from the repository.
-- Windows opened on the phone for tests are the user's screen: close the ones you opened. Don't close the user's own apps without asking.
+- Windows opened on the device for tests are the user's screen: close the ones you opened. Don't close the user's own apps without asking.
 
 ## Review Focus
 
@@ -78,7 +78,7 @@ Replace `l16-settings/org.l16linux.gschema.xml` with:
     <key name="lock-screen-camera" type="b">
       <default>true</default>
       <summary>Camera on the lock screen</summary>
-      <description>Whether the lock screen offers the default camera (a button on the lock screen, and the shutter button) without unlocking the phone. While it is open the phone stays locked, and the camera can only take photos and review the ones it took then.</description>
+      <description>Whether the lock screen offers the default camera (a button on the lock screen, and the shutter button) without unlocking the device. While it is open the device stays locked, and the camera app can only take photos and review the ones it took then.</description>
     </key>
   </schema>
 </schemalist>
@@ -105,7 +105,7 @@ placed right after `let settings = gio::Settings::new(SCHEMA);`, and replace the
     // the lock screen camera on or off (phosh reads the same key)
     let lock_row = adw::SwitchRow::builder()
         .title("Camera on the lock screen")
-        .subtitle("Open the camera without unlocking the phone")
+        .subtitle("Open the camera from the lock screen, without unlocking")
         .build();
     switch_settings.bind("lock-screen-camera", &lock_row, "active").build();
     group.add(&lock_row);
@@ -148,7 +148,7 @@ git commit -m "Checksum for l16-settings with the lock screen camera switch
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
-(The VM is the CI-faithful toolchain: it reproduces the author's `l16-camera` 56ffc9 and `l16-gallery` 539708 at 910a27e. Never make these checksums on the phone or the Mac.)
+(The VM is the CI-faithful toolchain: it reproduces the author's `l16-camera` 56ffc9 and `l16-gallery` 539708 at 910a27e. Never make these checksums on the device or the Mac.)
 
 ---
 
@@ -226,7 +226,7 @@ Expected: the log ends `Finished building packages` / `DONE!`. If a dependency f
 ```bash
 mkdir -p ~/phosh-build && scp -q lumey@192.168.1.6:.local/var/pmbootstrap/packages/v26.06/aarch64/phosh-0.55.0-r100.apk ~/phosh-r100.apk && ls -la ~/phosh-r100.apk && scp -q ~/phosh-r100.apk root@192.168.1.191:/tmp/phosh-r100.apk && ssh root@192.168.1.191 'ls -la /tmp/phosh-r100.apk; apk info -v phosh'
 ```
-Expected: the apk exists (several MB); device shows `phosh-0.55.0-r100` installed. (Note `/tmp` on the phone is a tmpfs: it is gone after a reboot. If a reboot happens, copy it again from `~/phosh-r100.apk` before installing anything.)
+Expected: the apk exists (several MB); device shows `phosh-0.55.0-r100` installed. (Note `/tmp` on the device is a tmpfs: it is gone after a reboot. If a reboot happens, copy it again from `~/phosh-r100.apk` before installing anything.)
 
 - [ ] **Step 5: Commit the script**
 
@@ -269,7 +269,7 @@ Create `src/dbus/org.l16linux.Shell.LockscreenCamera.xml`:
       org.l16linux.Shell.LockscreenCamera:
 
       Opens the default camera: normally when unlocked, over the lock screen
-      (the phone stays locked) when locked.
+      (the device stays locked) when locked.
   -->
   <interface name="org.l16linux.Shell.LockscreenCamera">
     <!--
@@ -351,7 +351,7 @@ Create `src/lockscreen-camera-manager.c`:
 /**
  * PhoshLockscreenCameraManager:
  *
- * (L16 downstream) Opens the default camera: normally when the phone is unlocked, and over
+ * (L16 downstream) Opens the default camera: normally when the device is unlocked, and over
  * the lock screen when it is locked. The shell stays locked the whole time; the lock screen
  * only steps aside while the camera's fullscreen window is up, and comes back the moment the
  * camera closes, loses the front, another window appears, or the screen blanks.
@@ -1010,7 +1010,7 @@ Then **ask the user** (they will need their PIN): "I'm going to install a test p
 ```bash
 scp -q ~/phosh-build/phosh-0.55.0-r101.apk root@192.168.1.191:/tmp/ && ssh root@192.168.1.191 'apk add --allow-untrusted /tmp/phosh-0.55.0-r101.apk 2>&1 | tail -3; apk info -v phosh; rc-service greetd restart 2>&1 | tail -2'
 ```
-Expected: `phosh-0.55.0-r101` installed; greetd restarts. The user logs in again. If the phone never comes back to a login screen: `apk add --allow-untrusted /tmp/phosh-r100.apk && rc-service greetd restart` (rollback), and stop to report.
+Expected: `phosh-0.55.0-r101` installed; greetd restarts. The user logs in again. If the device never comes back to a login screen: `apk add --allow-untrusted /tmp/phosh-r100.apk && rc-service greetd restart` (rollback), and stop to report.
 
 - [ ] **Step 8: First device test of the mechanics (a screenshot proves what is on screen)**
 
@@ -1040,7 +1040,7 @@ Expected: `/tmp/lock2.png` is the lock screen again (info page: clock, not the k
 
 - [ ] **Step 10: The 5 s watch and spamming `Open()` (Review Focus 2 and 3)**
 
-With the phone locked again (lock it as in Step 8), call `Open()` **three times in a row** and screenshot:
+With the device locked again (lock it as in Step 8), call `Open()` **three times in a row** and screenshot:
 ```bash
 ssh root@192.168.1.191 "$S; su user -c \"env \$E gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver --method org.gnome.ScreenSaver.Lock\"; sleep 2; for i in 1 2 3; do su user -c \"env \$E gdbus call --session --dest org.l16linux.Shell.LockscreenCamera --object-path /org/l16linux/Shell/LockscreenCamera --method org.l16linux.Shell.LockscreenCamera.Open\" >/dev/null; done; sleep 8; ps | grep -c '[b]in/nebula'; su user -c \"env \$E grim /tmp/lock3.png\"" && scp -q root@192.168.1.191:/tmp/lock3.png /tmp/
 ```
@@ -1081,7 +1081,7 @@ Create `tools/lockcam-touch.py`:
 #!/usr/bin/env python3
 """Fake touch gestures on a uinput touchscreen, to test the lock screen camera.
 
-Run on the phone as root:
+Run on the device as root:
   lockcam-touch.py edges                    a swipe in from each of the four edges (the bottom one last)
   lockcam-touch.py swipe X1 Y1 X2 Y2 [ms]   one swipe
   lockcam-touch.py tap X Y                  a tap
@@ -1208,7 +1208,7 @@ Expected: `syntax ok`.
 Create `tools/lockcam-test.sh`:
 ```sh
 #!/bin/sh
-# Lock screen camera: leak tests against the phone (run on the Mac).
+# Lock screen camera: leak tests against the device (run on the Mac).
 # For each scenario it lights the lock screen camera, throws touches at the screen, takes a
 # whole-display screenshot with grim, and saves it in /tmp/lockcam/ for a person to look at:
 # a pass is a screenshot that shows only the camera (or only the lock screen where noted).
@@ -1621,7 +1621,7 @@ Append to `src/stylesheet/common.css`:
 
 Run: `cd /Users/lumey/src/l16-linux && tools/phosh-build.sh 2>&1 | tail -15`
 Expected: a new r101 apk; fix compile or template errors (a template error shows at runtime in phosh's log: check `ssh root@192.168.1.191 'logread | tail -30'` after the restart).
-Ask the user for the session restart, install as in Task 5 Step 5, then lock the phone and look:
+Ask the user for the session restart, install as in Task 5 Step 5, then lock the device and look:
 ```bash
 ssh root@192.168.1.191 "$S; su user -c \"env \$E gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver --method org.gnome.ScreenSaver.Lock\"; sleep 3; su user -c \"env \$E grim /tmp/btn.png\"" && scp -q root@192.168.1.191:/tmp/btn.png /tmp/btn.png
 ```

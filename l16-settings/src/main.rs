@@ -58,7 +58,7 @@ fn camera_group() -> adw::PreferencesGroup {
     // the lock screen camera on or off (phosh reads the same key)
     let lock_row = adw::SwitchRow::builder()
         .title("Camera on the lock screen")
-        .subtitle("Open the camera without unlocking the phone")
+        .subtitle("Open the camera from the lock screen, without unlocking")
         .build();
     switch_settings.bind("lock-screen-camera", &lock_row, "active").build();
     group.add(&lock_row);

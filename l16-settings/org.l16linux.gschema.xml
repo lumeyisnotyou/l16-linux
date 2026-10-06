@@ -9,7 +9,7 @@
     <key name="lock-screen-camera" type="b">
       <default>true</default>
       <summary>Camera on the lock screen</summary>
-      <description>Whether the lock screen offers the default camera (a button on the lock screen, and the shutter button) without unlocking the phone. While it is open the phone stays locked, and the camera can only take photos and review the ones it took then.</description>
+      <description>Whether the lock screen offers the default camera (a button on the lock screen, and the shutter button) without unlocking the device. While it is open the device stays locked, and the camera app can only take photos and review the ones it took then.</description>
     </key>
   </schema>
 </schemalist>

@@ -5,7 +5,7 @@ Status: draft for review, 2026-10-05. Builds on the default-camera setting (comm
 ## Goal
 
 From a locked L16, open the default camera in a moment, the way a camera should behave: a camera
-button on the lock screen, or a press of the hardware shutter, even with the screen off. The phone
+button on the lock screen, or a press of the hardware shutter, even with the screen off. The device
 stays locked. Nothing but the camera is reachable until it is closed, and then the lock is back.
 
 ## Decisions (from the user)
