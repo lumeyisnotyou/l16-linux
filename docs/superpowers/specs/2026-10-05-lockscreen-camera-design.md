@@ -112,7 +112,7 @@ L16 additions to the lock screen: a camera button (`phosh-lockscreen-camera` CSS
 
 Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
 
-- no gallery launch from the thumbnail, no settings, no system panel;
+- no gallery launch from the thumbnail, no settings, no system panel (but a close button);
 - a strip of this session's shots: the preview frame kept at each shutter (not the processed photo,
   since LRI decoding is slow), held in memory and dropped on exit;
 - the photos are saved as usual to `~/Pictures/L16`, so they appear in the gallery after unlock;
@@ -139,7 +139,28 @@ Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
 3. Any failure, timeout or ambiguity ends locked, with the lock screen shown.
 4. The shown app is only ever the default camera, chosen by phosh and never by a caller.
 5. The camera in locked mode cannot open the gallery or any previous photo.
+   The exit gesture only closes the camera and re-covers; it can never open the overview.
 6. Unlocking is still only through the keypad/biometrics: the feature never sets `locked` to FALSE.
+
+## Leaving the camera (a way out, by gesture)
+
+With the home and top gestures off, the camera still has to be closable without unlocking, and
+closing it must land on the lock screen. Three ways out, all ending locked:
+
+1. **Swipe up from the bottom edge** (the usual "go home" gesture). In "camera over lock" phosh shows
+   its own thin exit strip instead of the home bar: a small `OVERLAY` layer surface anchored to the
+   bottom edge, its input region only that strip, with a visible handle. An upward drag past a
+   threshold asks the camera's toplevel to close (`phosh_toplevel_close`) and re-covers the screen at
+   once, without waiting for the app. It is a separate surface, not the home surface, so the overview
+   code is never involved and a swipe can't open it.
+2. **A close button in the camera** (kept in `--locked` mode, where the system panel is otherwise
+   gone): it quits the app, and phosh re-covers when the window unmaps.
+3. **The power button**: blanks the screen, and phosh re-covers.
+
+Rules: the lock screen is shown the moment the exit gesture completes, even if the camera is slow or
+hung (it is covered, not exposed); phosh asks it to close, and if the window is still there after
+3 s it signals the process. Shots in flight keep saving (the camera app holds its sleep inhibitor
+until they are written), and the app exits after.
 
 ## How the gestures are shut off (the risky part, concretely)
 
@@ -160,7 +181,7 @@ So "gestures off" is two switches plus a fail-safe, applied when entering "camer
 undone when re-covering:
 
 1. Home: set its drag mode to none (`phosh_drag_surface_set_drag_mode`) and hide its surface, so
-   the bottom edge does nothing and no home bar draws over the camera.
+   the home bar and overview can't be reached. The bottom edge is instead the exit strip above.
 2. Top panel: the same for the top edge (no shade, no quick settings, no power menu from it).
 3. Fail-safe: any state change not listed above (a new layer surface mapping, a toplevel other than
    the camera activating) re-covers instead of trying to handle it.
@@ -189,7 +210,9 @@ and after each. A pass is a screenshot that still shows only the camera, then th
 re-cover. The same script is run with the camera closed (must show the lock screen) and with an app
 open behind (must never show). `apk add grim` and a small uinput script are the only extra tools.
 
-On the device, with SSH open: shutter from a blanked locked screen; the lock-screen button; all
+On the device, with SSH open: the exit swipe from the bottom edge (closes the camera, lock screen
+shows, a shot taken just before it still saves), the close button, the power button, a hung camera
+(lock screen still shows at once); shutter from a blanked locked screen; the lock-screen button; all
 four edge swipes; the power key; the back/close paths; a camera that fails to start (stays locked);
 killing the camera (re-locks); another window open behind (must never show); the switch off; an
 unlocked shutter press; and the full unlock with the keypad after a locked shoot.
