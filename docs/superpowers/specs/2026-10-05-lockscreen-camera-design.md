@@ -15,6 +15,9 @@ stays locked. Nothing but the camera is reachable until it is closed, and then t
 - **Trigger: the on-screen lock-screen button and the hardware shutter button.**
 - **The camera is the default camera** (`org.l16linux.camera default-camera`: Nebula or Viewfinder).
 - **A switch to turn it off** in L16 Settings.
+- **The cameras are discovered, not hardcoded:** a camera app declares itself in its desktop file
+  (`X-L16-Camera=true`); L16 Settings lists whatever declares it (and is installed), so a third
+  camera app needs no change to Settings or phosh.
 
 ## Not in scope
 
@@ -60,8 +63,9 @@ New object `PhoshLockscreenCameraManager`, owner of the D-Bus name `org.l16linux
 (object `/org/l16linux/Shell/LockscreenCamera`) with one method:
 
 - `Open()` (no arguments). It never takes an app id: the app is always resolved by phosh from
-  `default-camera`, and only if that desktop id is one of the two cameras (`org.l16linux.Camera.desktop`,
-  `org.l16linux.Nebula.desktop`). A caller can only ask for "the camera".
+  `default-camera`. For the locked path the desktop entry must also be **system-installed** (under
+  `/usr/share/applications`, not a user-writable directory), declare `X-L16-Camera=true`, and have a
+  `Locked` action; otherwise `Open()` does nothing while locked. A caller can only ask for "the camera".
 
 `Open()` behavior:
 
@@ -120,6 +124,10 @@ Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
 - New key `org.l16linux.camera lock-screen-camera` (boolean, default true) in
   `l16-settings/org.l16linux.gschema.xml`.
 - A switch "Camera on the lock screen" in L16 Settings' Camera group.
+- The "Default camera" row is built from `gio::DesktopAppInfo::all()` filtered by `X-L16-Camera=true`
+  (replacing the hardcoded two-entry `CAMERAS` array in `l16-settings/src/main.rs`); the chosen one
+  stays listed even if its app has gone. The gallery's `default_camera()` already works with any id.
+- Both camera apps' desktop files gain `X-L16-Camera=true` and `Actions=Locked;`.
 - Phosh reads both keys through the schema source lookup used by the gallery (no abort when the
   schema is missing: the feature is then off).
 
@@ -133,19 +141,53 @@ Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
 5. The camera in locked mode cannot open the gallery or any previous photo.
 6. Unlocking is still only through the keypad/biometrics: the feature never sets `locked` to FALSE.
 
+## How the gestures are shut off (the risky part, concretely)
+
+What phosh 0.55 does, from the source:
+
+- The **home surface** (`src/home.c`: the home bar and the overview/app grid, a bottom-edge drag
+  surface) is normally unreachable when locked only because the lock screen is an exclusive overlay
+  on top of it. With the lock overlay hidden, an upward swipe from the bottom edge would unfold the
+  overview: every open window and the app grid. That is the main bypass to close.
+- The **top panel** (`src/top-panel.c`) is moved to the overlay layer while locked and keeps a drag
+  handle (the notification shade and quick settings). With the lock overlay hidden it would be
+  draggable too.
+- Guards that already follow `PhoshShell:locked` stay in force, because the design never clears it:
+  notification banners are suppressed (`shell.c`: `!priv->locked`), and shortcuts run in
+  the lock-screen action mode (`gnome-shell-manager.c`: `get_action_mode`).
+
+So "gestures off" is two switches plus a fail-safe, applied when entering "camera over lock" and
+undone when re-covering:
+
+1. Home: set its drag mode to none (`phosh_drag_surface_set_drag_mode`) and hide its surface, so
+   the bottom edge does nothing and no home bar draws over the camera.
+2. Top panel: the same for the top edge (no shade, no quick settings, no power menu from it).
+3. Fail-safe: any state change not listed above (a new layer surface mapping, a toplevel other than
+   the camera activating) re-covers instead of trying to handle it.
+
+Not yet known, and checked before anything else is built: whether phosh creates other surfaces that
+take edge touches (the on-screen keyboard, the emergency menu, modal prompts), and how phoc stacks
+and focuses windows with the overlay hidden. The plan starts with a stand-in app to find out.
+
 ## Risks
 
-- **Gestures and panels** are the main work and the main risk: an edge swipe on the overlay-layer
-  panels with no lock screen must not reach the overview. The test plan covers each gesture.
+- **A missed surface or gesture** is the main risk: one edge that still reaches something other than
+  the camera is a lock bypass. Mitigation is the test method below, run for every edge and every
+  surface phosh creates.
 - **A phosh patch** can break the lock screen; the session can be left unable to unlock. Mitigation:
   the whole behavior sits behind `lock-screen-camera`, I build and test with an SSH session open, and
   the device can go back to phosh r100 with `apk add phosh=0.55.0-r100`.
 - **The shutter** is read as a raw evdev device by two programs at once (the listener and the camera
   app). Both only read; the front marker keeps them from both acting.
-- Phoc's behavior when the lock overlay is hidden (focus, which window is on top) is checked on the
-  device; if it differs from this model the design changes before more is built.
 
 ## Test plan
+
+**Method, so that it doesn't rest on my say-so:** with the camera over the lock, synthesise touches
+through `/dev/uinput` (a swipe from each of the four edges, long presses, two-finger and corner
+touches) and take a whole-output screenshot with `grim` (wlr-screencopy, from the phosh session) before
+and after each. A pass is a screenshot that still shows only the camera, then the keypad after
+re-cover. The same script is run with the camera closed (must show the lock screen) and with an app
+open behind (must never show). `apk add grim` and a small uinput script are the only extra tools.
 
 On the device, with SSH open: shutter from a blanked locked screen; the lock-screen button; all
 four edge swipes; the power key; the back/close paths; a camera that fails to start (stays locked);
