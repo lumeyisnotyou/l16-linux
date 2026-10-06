@@ -1,50 +1,58 @@
 // L16 Settings: the options of the L16's own apps, in groups, so more can join the camera one.
+mod cameras;
+
 use adw::prelude::*;
 use adw::{gio, glib};
 
 const APP_ID: &str = "org.l16linux.Settings";
 const SCHEMA: &str = "org.l16linux.camera";
 
-// the cameras one can choose: (desktop id, name)
-const CAMERAS: [(&str, &str); 2] = [
-    ("org.l16linux.Camera.desktop", "Viewfinder"),
-    ("org.l16linux.Nebula.desktop", "Nebula"),
-];
+// the desktop entries on the system, as the discovery wants them (the key is X-L16-Camera=true)
+fn installed_apps() -> Vec<cameras::App> {
+    gio::AppInfo::all()
+        .into_iter()
+        .filter_map(|a| {
+            let d = a.downcast::<gio::DesktopAppInfo>().ok()?;
+            Some(cameras::App {
+                id: d.id()?.to_string(),
+                name: d.name().to_string(),
+                is_camera: d.boolean("X-L16-Camera"),
+            })
+        })
+        .collect()
+}
 
 fn camera_group() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Camera")
         .description("Opened by the gallery's camera button")
         .build();
-    // only the cameras that are installed (the chosen one stays listed, so the row shows it)
     let settings = gio::Settings::new(SCHEMA);
     let chosen = settings.string("default-camera").to_string();
-    let cameras: Vec<(&str, &str)> = CAMERAS
-        .iter()
-        .copied()
-        .filter(|(id, _)| *id == chosen || gio::DesktopAppInfo::new(id).is_some())
-        .collect();
-    let names: Vec<&str> = cameras.iter().map(|(_, n)| *n).collect();
+    let cams = cameras::discover(installed_apps(), &chosen);
+    let names: Vec<&str> = cams.iter().map(|c| c.name.as_str()).collect();
     let row = adw::ComboRow::builder()
         .title("Default camera")
-        .model(&gtk4_string_list(&names))
+        .model(&adw::gtk::StringList::new(&names))
         .build();
-    if let Some(i) = cameras.iter().position(|(id, _)| *id == chosen) {
-        row.set_selected(i as u32);
-    }
-    row.connect_selected_notify(move |row| {
-        if let Some((id, _)) = cameras.get(row.selected() as usize) {
-            if let Err(e) = settings.set_string("default-camera", id) {
-                eprintln!("saving the default camera: {e}");
-            }
+    if cams.is_empty() {
+        // nothing to choose: say so, and don't offer an empty list
+        row.set_sensitive(false);
+        row.set_subtitle("No camera app is installed");
+    } else {
+        if let Some(i) = cams.iter().position(|c| c.id == chosen) {
+            row.set_selected(i as u32);
         }
-    });
+        row.connect_selected_notify(move |row| {
+            if let Some(c) = cams.get(row.selected() as usize) {
+                if let Err(e) = settings.set_string("default-camera", &c.id) {
+                    eprintln!("saving the default camera: {e}");
+                }
+            }
+        });
+    }
     group.add(&row);
     group
-}
-
-fn gtk4_string_list(items: &[&str]) -> adw::gtk::StringList {
-    adw::gtk::StringList::new(items)
 }
 
 fn build(app: &adw::Application) {
