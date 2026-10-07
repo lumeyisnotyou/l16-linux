@@ -37,7 +37,7 @@ new file mode 100644
 index 000000000..b46f03665
 --- /dev/null
 +++ b/drivers/media/i2c/light-ccb.c
-@@ -0,0 +1,1822 @@
+@@ -0,0 +1,1830 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Light L16 camera ASICs ("CCB") as a CSI-2 source for CAMSS.
@@ -1314,7 +1314,7 @@ index 000000000..b46f03665
 +	static const u8 stack_off[] = { 0x00, 0x01 };
 +	bool restack = false;
 +	u8 body[3 + 3 * 16], prev[6], m[CCB_MSG_MAX];
-+	unsigned long end;
++	unsigned long end, exp_ms;
 +	int mod = c->module->cur.val, n = 0, i, t, ret;
 +	u16 tid;
 +
@@ -1377,8 +1377,16 @@ index 000000000..b46f03665
 +	 * size shift, record count, then a u16 size per record (in 2^shift bytes)
 +	 */
 +	ret = -ETIMEDOUT;
-+	/* stock: (frame time + exposure) x frames, at least 500 ms; here more room */
-+	end = jiffies + msecs_to_jiffies(3000 + 1000 * burst[2]);
++	/*
++	 * stock: (frame time + exposure) x frames, at least 500 ms; here more room. The exposure
++	 * is the manual one, else the ASICs' metering (up to 15 s in the dark, where they stack
++	 * several exposures per module unless asked not to): a 15 s photo is 15 s before its reply
++	 */
++	exp_ms = (c->exp_auto->cur.val == V4L2_EXPOSURE_MANUAL ? c->exp_us->cur.val :
++		  c->ae_us->cur.val) / 1000;
++	if (c->exp_auto->cur.val != V4L2_EXPOSURE_MANUAL && !(cap->flags & LIGHT_CCB_CAPTURE_NO_STACK))
++		exp_ms *= 4;
++	end = jiffies + msecs_to_jiffies(min(3000 + (1000 + exp_ms) * burst[2], 180000UL));
 +	while (time_before(jiffies, end)) {
 +		t = ccb_read(c, m, sizeof(m));
 +		if (t == CCB_TYPE_DESCRIPTOR && get_unaligned_le16(m + 2) >= 6) {
