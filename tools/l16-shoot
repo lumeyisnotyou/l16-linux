@@ -6,9 +6,11 @@
 #   l16-shoot transfer DIR
 #       pull the records over each ASIC's CSI-2 link (virtual channel 1, data type 0x30)
 #       into DIR/asicN.raw (/dev/video1-3), while the preview streams on.
-#   l16-shoot setup
-#       link and format the transfer paths (/dev/video1-3) only; for a camera app that keeps
-#       them streaming (stopping an idle RDI times out and leaves it unusable).
+#   l16-shoot setup [ASIC...]
+#       link and format the transfer paths (/dev/video1-3) only (those of the ASICs named,
+#       1-3; all by default: ASIC1's is the preview's CSID, so only after the preview runs, the
+#       others' can be made while it starts); for a camera app that keeps them streaming
+#       (stopping an idle RDI times out and leaves it unusable).
 # l16-lri-assemble then makes the LRI from DIR/asic*.raw.
 import fcntl
 import glob
@@ -87,13 +89,16 @@ PATHS = [
 
 def setup(asics=(1, 2, 3)):
 	m = ["media-ctl", "-d", "/dev/media0"]
-	sensor = sensor_entity()
+	# (the sensor's entity name is only wanted for ASIC2's and ASIC3's pads: ASIC1's setup, the
+	# one made once the preview runs, spares the graph dump)
+	sensor = sensor_entity() if any(a > 1 for a in asics) else None
 	for a, links, pads in PATHS:
 		if a not in asics:
 			continue
-		subprocess.run(m + ["-l", ",".join(links)], check=True)
 		fmts = pads + (['"%s":%d' % (sensor, a - 1)] if a > 1 else [])
-		subprocess.run(m + ["-V", ",".join("%s[%s]" % (p, FMT) for p in fmts)], check=True)
+		# links and formats in one call: the links first, as media-ctl does
+		subprocess.run(m + ["-l", ",".join(links), "-V", ",".join("%s[%s]" % (p, FMT) for p in fmts)],
+			       check=True)
 		subprocess.run(["v4l2-ctl", "-d", "/dev/video%d" % a,
 				"--set-fmt-video=width=1408,height=9219,pixelformat=pgAA"], check=True)
 
@@ -141,7 +146,7 @@ if len(sys.argv) in (4, 5) and sys.argv[1] == "capture":
 	capture(sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) == 5 else 1)
 elif len(sys.argv) == 3 and sys.argv[1] == "transfer":
 	transfer(sys.argv[2])
-elif len(sys.argv) == 2 and sys.argv[1] == "setup":
-	setup()
+elif len(sys.argv) >= 2 and sys.argv[1] == "setup":
+	setup(tuple(int(a) for a in sys.argv[2:]) or (1, 2, 3))
 else:
-	sys.exit("usage: l16-shoot capture 28|70|150|CAM,... DIR [BURST] | transfer DIR | setup")
+	sys.exit("usage: l16-shoot capture 28|70|150|CAM,... DIR [BURST] | transfer DIR | setup [ASIC...]")
