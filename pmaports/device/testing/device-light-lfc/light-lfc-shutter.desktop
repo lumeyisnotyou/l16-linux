@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Light L16 shutter button
+Comment=The shutter button opens the camera, from the lock screen too
+Exec=/usr/bin/light-lfc-shutter
+NoDisplay=true
+X-GNOME-AutoRestart=true

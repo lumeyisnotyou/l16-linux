@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+# light-lfc-shutter: the shutter button opens the camera from anywhere, the lock screen included.
+# Runs in the session. A press of the button (KEY_CAMERA on the gpio-keys input device) asks phosh
+# for the camera: Open() on org.l16linux.Shell.LockscreenCamera. Phosh decides what that means:
+# unlocked, the default camera starts as usual; locked, and with "Camera on the lock screen" on, it
+# opens over the lock screen (shoot and review only); otherwise the screen is only woken.
+#
+# A camera app that is in front takes the button itself (it is the shutter there), so the press is
+# ignored then: the app says it is in front with $XDG_RUNTIME_DIR/l16-camera.front, holding its PID
+# (an older app leaves it empty; that counts while one of the camera apps runs). A marker left by a
+# crashed app doesn't count.
+#
+# This carries no security decision: all a caller of Open() can get is the default camera, and only
+# in the locked mode phosh allows.
+#
+# For testing, L16_SHUTTER_DEVICE=/dev/input/eventN reads that device instead of gpio-keys.
+import glob
+import os
+import struct
+import subprocess
+import sys
+import time
+
+EV_KEY = 1
+KEY_CAMERA = 212
+DEVICE_NAME = "gpio-keys"
+# the camera apps whose l16-camera.front marker (without a PID) counts as in front
+CAMERA_COMMS = ("l16-camera", "nebula")
+# a press just after another is the same press (the camera is on its way)
+DEBOUNCE_S = 1.5
+OPEN = [
+	"gdbus", "call", "--session",
+	"--dest", "org.l16linux.Shell.LockscreenCamera",
+	"--object-path", "/org/l16linux/Shell/LockscreenCamera",
+	"--method", "org.l16linux.Shell.LockscreenCamera.Open",
+]
+
+
+def log(msg):
+	print("light-lfc-shutter: " + msg, flush=True)
+
+
+def comm_running(comms):
+	for comm in glob.glob("/proc/[0-9]*/comm"):
+		try:
+			if open(comm).read().strip() in comms:
+				return True
+		except OSError:
+			pass
+	return False
+
+
+def pid_alive(pid):
+	if pid <= 0:
+		return False
+	try:
+		os.kill(pid, 0)
+	except ProcessLookupError:
+		return False
+	except PermissionError:
+		return True  # there, and not ours
+	return True
+
+
+def camera_in_front(runtime_dir):
+	try:
+		text = open(os.path.join(runtime_dir, "l16-camera.front")).read().strip()
+	except OSError:
+		return False
+	word = text.split()[0] if text.split() else ""
+	if word.isdigit():
+		return pid_alive(int(word))
+	return comm_running(CAMERA_COMMS)
+
+
+def open_camera():
+	subprocess.run(OPEN, check=False, stdout=subprocess.DEVNULL, timeout=20)
+
+
+class Handler:
+	def __init__(self, runtime_dir, opener=open_camera):
+		self.runtime_dir = runtime_dir
+		self.opener = opener
+		self.last = None
+
+	def event(self, code, value, now):
+		# a press only: not the release (0) or the repeat (2)
+		if code != KEY_CAMERA or value != 1:
+			return
+		if self.last is not None and now - self.last < DEBOUNCE_S:
+			return
+		if camera_in_front(self.runtime_dir):
+			return
+		self.last = now
+		try:
+			self.opener()
+		except Exception as e:  # never stop listening for the next press
+			log("Open() failed: %s" % e)
+
+
+def device():
+	override = os.environ.get("L16_SHUTTER_DEVICE")
+	if override:
+		return override
+	for name in glob.glob("/sys/class/input/event*/device/name"):
+		try:
+			if open(name).read().strip() == DEVICE_NAME:
+				return "/dev/input/" + name.split("/")[4]
+		except OSError:
+			pass
+	return None
+
+
+def main():
+	runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+	handler = Handler(runtime_dir)
+	while True:
+		path = device()
+		if not path:
+			log("no input device %s: waiting" % DEVICE_NAME)
+			time.sleep(5)
+			continue
+		try:
+			with open(path, "rb") as f:
+				log("listening on %s" % path)
+				# struct input_event on 64-bit: timeval (16), type, code, value
+				while True:
+					buf = f.read(24)
+					if len(buf) < 24:
+						break
+					_, _, typ, code, value = struct.unpack("<qqHHi", buf)
+					if typ == EV_KEY:
+						handler.event(code, value, time.monotonic())
+		except OSError as e:
+			log("%s: %s" % (path, e))
+		time.sleep(2)
+
+
+if __name__ == "__main__":
+	sys.exit(main())

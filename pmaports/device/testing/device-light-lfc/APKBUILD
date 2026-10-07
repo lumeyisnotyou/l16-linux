@@ -3,7 +3,7 @@
 pkgname=device-light-lfc
 pkgdesc="Light L16"
 pkgver=1
-pkgrel=37
+pkgrel=38
 url="https://postmarketos.org"
 license="MIT"
 arch="aarch64"
@@ -65,6 +65,8 @@ source="
 	light-lfc-reboot-android
 	light-lfc-rotate
 	light-lfc-rotate.desktop
+	light-lfc-shutter
+	light-lfc-shutter.desktop
 	light-lfc-suspend-on-blank
 	light-lfc-suspend-on-blank.desktop
 	logind-light-lfc.conf
@@ -179,8 +181,8 @@ phosh() {
 	install_if="$pkgname=$pkgver-r$pkgrel postmarketos-ui-phosh"
 	replaces="phosh"
 	# greetd: the post-install configures its user; light-lfc-rotate: monitor-sensor,
-	# wlr-randr
-	depends="greetd iio-sensor-proxy l16-phosh-plugins wlr-randr"
+	# wlr-randr; light-lfc-shutter: gdbus (glib-bin), python3
+	depends="glib-bin greetd iio-sensor-proxy l16-phosh-plugins python3 wlr-randr"
 	install="$subpkgname.post-install $subpkgname.post-upgrade"
 
 	# landscape (kernel panel orientation) at 2x (250 % is wanted: see todo/README.md)
@@ -214,6 +216,13 @@ phosh() {
 		-t "$subpkgdir"/etc/xdg/autostart
 	install -Dm644 "$srcdir"/light-lfc-rotate.desktop \
 		-t "$subpkgdir"/usr/share/phrog/autostart
+
+	# the shutter button opens the camera from anywhere, the lock screen included (in the
+	# session only: the login screen has no camera)
+	install -Dm755 "$srcdir"/light-lfc-shutter \
+		"$subpkgdir"/usr/bin/light-lfc-shutter
+	install -Dm644 "$srcdir"/light-lfc-shutter.desktop \
+		-t "$subpkgdir"/etc/xdg/autostart
 }
 sha512sums="
 ae20add2083afcdb2ade1348127f6510a7056f1a74d5f5639decd7da9a972436d93f25375e6ba740403208b35711a310b5a62efc2de335d1334a9728eb095bb9  50-light-lfc-suspend.rules
@@ -244,6 +253,8 @@ afef388c6312a9df8c1c535769280b657a05d1afd45e2dd89c5636f3c05e7e76c3c64004af220cc3
 6d9f22b0adc3a2ea7fdd0dbbe907ff7261638b5b20cc52eb02ed96349fbbdf8058259a1879bba643059d36c7f21304451ef1de11bbb0816e18ed45f775ee6976  light-lfc-reboot-android
 7f8baefaaa5423983da689063c93ad5881a0e344dd492853e391d27f49974d874981bc143e34704f7d20ee8bed6adb66f503ef9d5056d28c1aef2000143a11d4  light-lfc-rotate
 9791da069e950b9d69024e24ebf434648299216416d0301475c3e609b6ca83c3e8eb33225627571be4773f9efb6bb8aed2af5d117307b2f13f4284f839a5d4a7  light-lfc-rotate.desktop
+8d08cec29dc20b1aa7456f526dd208e41be845984e933aacb83a2e7a4731aa290d628f72986fbc91367d0508e7c0da474921b98672c8bd2c834af108608e9b8a  light-lfc-shutter
+3de8662477ae9b699ca988684c96f4b44d7cebbf06b409b0226eeea4c477b8c6265de9d64cd53cb0e854c38067f7cc8e4bd6fbf1735b714f560f02747a441c7f  light-lfc-shutter.desktop
 437c9ef112722bfcafa4b9f9609d2da63cfb79818e9857faae1f2db2b8ee9709aa7a6ff4ff58d4f7aeeb1cd47ebd5d4f7f264a465044bf3a8e90de832e70e936  light-lfc-suspend-on-blank
 b1b827b01058a544ed31dafcac7bd3ead8de1bd5134162eb4cb5bb586123cc6624ec4f5d18ec682318eef0329438ca321ac488b5539dbc688c81e2892296fec2  light-lfc-suspend-on-blank.desktop
 d191efa265677cc9d13d968e3190e3176aec89403bd9399c5b20cae97e32416763cea75e4998fd6434e34136ccd2e99e4c6fb05f726fd151852e6d28e3995594  logind-light-lfc.conf
