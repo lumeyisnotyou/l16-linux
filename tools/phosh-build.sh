@@ -36,5 +36,6 @@ fi
 tail -6 "$LOG"
 rm -f "$LOG"
 mkdir -p "$HOME/phosh-build"
-scp -q "$VM":.local/var/pmbootstrap/packages/v26.06/aarch64/phosh-0.55.0-*.apk "$HOME/phosh-build/"
+scp -q "$VM":.local/var/pmbootstrap/packages/v26.06/aarch64/phosh-0.55.0-*.apk \
+  "$VM":.local/var/pmbootstrap/packages/v26.06/aarch64/libphosh-0.55.0-*.apk "$HOME/phosh-build/"
 ls -la "$HOME/phosh-build/"

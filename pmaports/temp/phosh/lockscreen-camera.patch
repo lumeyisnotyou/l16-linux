@@ -200,10 +200,10 @@ index 0000000..5bf6b86
 +G_END_DECLS
 diff --git a/src/lockscreen-camera-manager.c b/src/lockscreen-camera-manager.c
 new file mode 100644
-index 0000000..ff157fb
+index 0000000..6a035d3
 --- /dev/null
 +++ b/src/lockscreen-camera-manager.c
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,632 @@
 +/*
 + * Copyright (C) 2026 lumey
 + *
@@ -222,6 +222,7 @@ index 0000000..ff157fb
 +
 +#include <gio/gdesktopappinfo.h>
 +#include <signal.h>
++#include <string.h>
 +
 +/**
 + * PhoshLockscreenCameraManager:
@@ -241,8 +242,9 @@ index 0000000..ff157fb
 +#define CAMERA_KEY "X-L16-Camera"
 +#define LOCKED_ACTION "Locked"
 +
-+/* a camera's cold start (the hardware streams) takes 4-6 s: the watch must outlast it */
-+#define LAUNCH_TIMEOUT_SECONDS 10
++/* a camera's cold start (the hardware streams) takes 4-6 s, and a camera app left open is closed first
++ * (a few seconds): the watch must outlast both */
++#define LAUNCH_TIMEOUT_SECONDS 15
 +#define ACTIVATE_TIMEOUT_SECONDS 2
 +#define CLOSE_GRACE_SECONDS 3
 +
@@ -258,6 +260,7 @@ index 0000000..ff157fb
 +  GSettings     *settings;            /* NULL without the schema: the feature is off */
 +  guint          dbus_name_id;
 +  gboolean       connected;           /* signals of the toplevel manager and the shell */
++  gboolean       shell;               /* running as the shell (phosh), not as the login screen */
 +
 +  State          state;
 +  char          *app_id;              /* the camera's Wayland app id (its desktop id, no ".desktop") */
@@ -267,6 +270,8 @@ index 0000000..ff157fb
 +  guint          launch_timeout_id;
 +  guint          activate_timeout_id;
 +  guint          kill_timeout_id;
++  GHashTable    *stale;               /* camera windows that were already open: not ours (no refs) */
++  GDesktopAppInfo *pending;           /* to launch once those have closed */
 +};
 +
 +static void phosh_dbus_lockscreen_camera_iface_init (PhoshDBusLockscreenCameraIface *iface);
@@ -280,7 +285,8 @@ index 0000000..ff157fb
 +static gboolean
 +lock_screen_camera_enabled (PhoshLockscreenCameraManager *self)
 +{
-+  return self->settings && g_settings_get_boolean (self->settings, "lock-screen-camera");
++  /* the login screen (phrog) uses this same library: no camera before anyone has logged in */
++  return self->shell && self->settings && g_settings_get_boolean (self->settings, "lock-screen-camera");
 +}
 +
 +
@@ -338,15 +344,29 @@ index 0000000..ff157fb
 +}
 +
 +
-+/* Is the camera's window still there? (looks through all toplevels) */
++/* A camera window that was open before this launch (an unlocked camera app left open): not the
++ * locked camera, whatever its app id says */
 +static gboolean
-+camera_window_present (PhoshLockscreenCameraManager *self)
++is_stale (PhoshLockscreenCameraManager *self, PhoshToplevel *toplevel)
 +{
-+  PhoshToplevelManager *manager = phosh_shell_get_toplevel_manager (phosh_shell_get_default ());
-+  guint num = phosh_toplevel_manager_get_num_toplevels (manager);
++  return g_hash_table_contains (self->stale, toplevel);
++}
 +
-+  for (guint i = 0; i < num; i++) {
-+    if (is_camera (self, phosh_toplevel_manager_get_toplevel (manager, i)))
++
++/* Is @pid still the locked camera that was started? Its command line says --locked (a pid can be
++ * reused by something else by the time it is asked to go) */
++static gboolean
++pid_is_locked_camera (GPid pid)
++{
++  g_autofree char *path = g_strdup_printf ("/proc/%d/cmdline", (int) pid);
++  g_autofree char *data = NULL;
++  gsize len = 0;
++
++  if (!g_file_get_contents (path, &data, &len, NULL))
++    return FALSE;
++  /* the arguments are separated by NULs */
++  for (gsize i = 0; i < len; i += strlen (data + i) + 1) {
++    if (g_strcmp0 (data + i, "--locked") == 0)
 +      return TRUE;
 +  }
 +  return FALSE;
@@ -359,8 +379,8 @@ index 0000000..ff157fb
 +  PhoshLockscreenCameraManager *self = data;
 +
 +  self->kill_timeout_id = 0;
-+  /* only if the window is still there: the pid could belong to something else by now */
-+  if (self->pid > 0 && camera_window_present (self)) {
++  /* whether its window ever came or not (a camera that is late must not turn up under the lock) */
++  if (self->pid > 0 && pid_is_locked_camera (self->pid)) {
 +    g_message ("Lock screen camera didn't close: terminating %d", self->pid);
 +    kill (self->pid, SIGTERM);
 +  }
@@ -383,6 +403,7 @@ index 0000000..ff157fb
 +  self->state = STATE_IDLE;
 +  g_clear_handle_id (&self->launch_timeout_id, g_source_remove);
 +  g_clear_handle_id (&self->activate_timeout_id, g_source_remove);
++  g_clear_object (&self->pending);
 +
 +  /* cover first: the lock screen is back before anything else happens */
 +  if (was_over)
@@ -432,6 +453,15 @@ index 0000000..ff157fb
 +static void
 +enter_over_lock (PhoshLockscreenCameraManager *self, PhoshToplevel *toplevel)
 +{
++  PhoshShell *shell = phosh_shell_get_default ();
++
++  /* the window can come late: only over a lock screen that is up and lit */
++  if (!phosh_shell_get_locked (shell) || phosh_shell_get_blanked (shell)) {
++    phosh_toplevel_close (toplevel);
++    recover (self, "the window came when the lock screen was not up and lit");
++    return;
++  }
++
 +  g_debug ("Lock screen camera: window up, stepping the lock screen aside");
 +  self->state = STATE_OVER_LOCK;
 +  g_clear_handle_id (&self->launch_timeout_id, g_source_remove);
@@ -477,10 +507,12 @@ index 0000000..ff157fb
 +  if (self->state == STATE_IDLE)
 +    return;
 +
-+  if (is_camera (self, toplevel))
-+    check_camera_window (self, toplevel);
-+  else if (self->state == STATE_OVER_LOCK)
++  if (is_camera (self, toplevel)) {
++    if (!is_stale (self, toplevel))
++      check_camera_window (self, toplevel);
++  } else if (self->state == STATE_OVER_LOCK) {
 +    recover (self, "another window appeared");
++  }
 +}
 +
 +
@@ -492,23 +524,27 @@ index 0000000..ff157fb
 +  if (self->state == STATE_IDLE)
 +    return;
 +
-+  if (is_camera (self, toplevel))
-+    check_camera_window (self, toplevel);
-+  else if (self->state == STATE_OVER_LOCK && phosh_toplevel_is_activated (toplevel))
++  if (is_camera (self, toplevel)) {
++    if (!is_stale (self, toplevel))
++      check_camera_window (self, toplevel);
++  } else if (self->state == STATE_OVER_LOCK && phosh_toplevel_is_activated (toplevel)) {
 +    recover (self, "another window got the focus");
++  }
 +}
 +
 +
 +static void
 +on_shell_state_changed (PhoshLockscreenCameraManager *self, GParamSpec *pspec, PhoshShell *shell)
 +{
-+  if (self->state != STATE_OVER_LOCK)
++  if (self->state == STATE_IDLE)
 +    return;
 +
-+  if (phosh_shell_get_blanked (shell))
-+    recover (self, "screen blanked");
-+  else if (!phosh_shell_get_locked (shell))
++  /* unlocked at any point, blanked once over the lock (while it is still launching the screen may
++   * be coming on: the window is checked against it when it comes) */
++  if (!phosh_shell_get_locked (shell))
 +    recover (self, "unlocked");
++  else if (self->state == STATE_OVER_LOCK && phosh_shell_get_blanked (shell))
++    recover (self, "screen blanked");
 +}
 +
 +
@@ -543,6 +579,45 @@ index 0000000..ff157fb
 +
 +  if (platform_data && g_variant_lookup (platform_data, "pid", "i", &pid))
 +    self->pid = pid;
++}
++
++
++static void launch_camera (PhoshLockscreenCameraManager *self, GDesktopAppInfo *info, gboolean locked);
++
++
++static void
++on_stale_closed (PhoshToplevel *toplevel, PhoshLockscreenCameraManager *self)
++{
++  g_hash_table_remove (self->stale, toplevel);
++  g_signal_handlers_disconnect_by_data (toplevel, self);
++
++  if (self->pending && g_hash_table_size (self->stale) == 0 && self->state == STATE_LAUNCHING) {
++    g_autoptr (GDesktopAppInfo) info = g_steal_pointer (&self->pending);
++
++    launch_camera (self, info, TRUE);
++  }
++}
++
++
++/* A camera app left open (unlocked, asleep behind the lock) holds the camera and would leave the
++ * locked one with a black screen: it is asked to close, and the locked one starts when it has */
++static void
++close_open_cameras (PhoshLockscreenCameraManager *self)
++{
++  PhoshToplevelManager *manager = phosh_shell_get_toplevel_manager (phosh_shell_get_default ());
++  guint num = phosh_toplevel_manager_get_num_toplevels (manager);
++
++  for (guint i = 0; i < num; i++) {
++    PhoshToplevel *toplevel = phosh_toplevel_manager_get_toplevel (manager, i);
++
++    if (!is_camera (self, toplevel))
++      continue;
++    if (!is_stale (self, toplevel)) {
++      g_hash_table_add (self->stale, toplevel);
++      g_signal_connect (toplevel, "closed", G_CALLBACK (on_stale_closed), self);
++    }
++    phosh_toplevel_close (toplevel);
++  }
 +}
 +
 +
@@ -582,19 +657,23 @@ index 0000000..ff157fb
 +
 +  g_return_if_fail (PHOSH_IS_LOCKSCREEN_CAMERA_MANAGER (self));
 +
++  if (!self->shell)
++    return;
++
 +  info = default_camera (self);
 +  if (info == NULL) {
 +    g_message ("No default camera to open");
 +    return;
 +  }
 +
++  /* wake the screen first: unlocked, a shutter press with the display dark must show the camera;
++   * locked, it must show at least the lock screen */
++  phosh_lockscreen_manager_wakeup (phosh_shell_get_lockscreen_manager (shell));
++
 +  if (!phosh_shell_get_locked (shell)) {
 +    launch_camera (self, info, FALSE);
 +    return;
 +  }
-+
-+  /* locked: at least wake the screen, so the lock screen shows */
-+  phosh_lockscreen_manager_wakeup (phosh_shell_get_lockscreen_manager (shell));
 +
 +  if (!lock_screen_camera_enabled (self) || !fit_for_lock_screen (info))
 +    return;
@@ -610,7 +689,12 @@ index 0000000..ff157fb
 +  self->app_id = g_str_has_suffix (id, ".desktop") ? g_strndup (id, strlen (id) - 8) : g_strdup (id);
 +  self->state = STATE_LAUNCHING;
 +  self->launch_timeout_id = g_timeout_add_seconds (LAUNCH_TIMEOUT_SECONDS, on_launch_timeout, self);
-+  launch_camera (self, info, TRUE);
++
++  close_open_cameras (self);
++  if (g_hash_table_size (self->stale) > 0)
++    g_set_object (&self->pending, info);   /* launched when they have closed (on_stale_closed) */
++  else
++    launch_camera (self, info, TRUE);
 +}
 +
 +
@@ -685,7 +769,19 @@ index 0000000..ff157fb
 +  g_clear_handle_id (&self->launch_timeout_id, g_source_remove);
 +  g_clear_handle_id (&self->activate_timeout_id, g_source_remove);
 +  g_clear_handle_id (&self->kill_timeout_id, g_source_remove);
++  if (self->toplevel)
++    g_signal_handlers_disconnect_by_data (self->toplevel, self);
 +  g_clear_weak_pointer (&self->toplevel);
++  g_clear_object (&self->pending);
++  if (self->stale) {
++    GHashTableIter iter;
++    gpointer toplevel;
++
++    g_hash_table_iter_init (&iter, self->stale);
++    while (g_hash_table_iter_next (&iter, &toplevel, NULL))
++      g_signal_handlers_disconnect_by_data (toplevel, self);
++    g_clear_pointer (&self->stale, g_hash_table_unref);
++  }
 +  if (g_dbus_interface_skeleton_get_connection (G_DBUS_INTERFACE_SKELETON (self)))
 +    g_dbus_interface_skeleton_unexport (G_DBUS_INTERFACE_SKELETON (self));
 +  g_clear_handle_id (&self->dbus_name_id, g_bus_unown_name);
@@ -711,6 +807,15 @@ index 0000000..ff157fb
 +  GSettingsSchemaSource *source = g_settings_schema_source_get_default ();
 +  g_autoptr (GSettingsSchema) schema = NULL;
 +
++  self->stale = g_hash_table_new (g_direct_hash, g_direct_equal);
++
++  /* the login screen (phrog) is this library too: it gets neither the feature nor the D-Bus name */
++  self->shell = g_strcmp0 (g_get_prgname (), "phosh") == 0;
++  if (!self->shell) {
++    g_message ("Not the shell (%s): no lock screen camera", g_get_prgname ());
++    return;
++  }
++
 +  /* Settings::new aborts without its schema: without it the feature is simply off */
 +  if (source)
 +    schema = g_settings_schema_source_lookup (source, SCHEMA_ID, TRUE);
@@ -721,8 +826,7 @@ index 0000000..ff157fb
 +
 +  self->dbus_name_id = g_bus_own_name (G_BUS_TYPE_SESSION,
 +                                       LOCKSCREEN_CAMERA_DBUS_NAME,
-+                                       G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT |
-+                                       G_BUS_NAME_OWNER_FLAGS_REPLACE,
++                                       G_BUS_NAME_OWNER_FLAGS_REPLACE,   /* not replaceable by others */
 +                                       on_bus_acquired, NULL, NULL, self, NULL);
 +}
 +
@@ -828,7 +932,7 @@ index 06c9b84..0da7627 100644
 +
  G_END_DECLS
 diff --git a/src/lockscreen.c b/src/lockscreen.c
-index 056fa76..d0a79db 100644
+index 056fa76..d653edc 100644
 --- a/src/lockscreen.c
 +++ b/src/lockscreen.c
 @@ -15,6 +15,7 @@
@@ -893,7 +997,7 @@ index 056fa76..d0a79db 100644
  }
  
  
-@@ -564,6 +591,28 @@ wall_clock_notify_cb (PhoshLockscreen *self,
+@@ -564,6 +591,31 @@ wall_clock_notify_cb (PhoshLockscreen *self,
  }
  
  
@@ -909,7 +1013,10 @@ index 056fa76..d0a79db 100644
 +  if (!priv->carousel)
 +    return FALSE;
 +
-+  pos = CLAMP (hdy_carousel_get_position (HDY_CAROUSEL (priv->carousel)), 0.0, 1.0);
++  /* 0 at the first page, 1 at the last (the passcode page): the login screen has one more page between */
++  pos = hdy_carousel_get_position (HDY_CAROUSEL (priv->carousel)) /
++        MAX (1, (int) hdy_carousel_get_n_pages (HDY_CAROUSEL (priv->carousel)) - 1);
++  pos = CLAMP (pos, 0.0, 1.0);
 +  if (pos > 0.0) {
 +    cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 0.5 * pos);
 +    cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
@@ -922,7 +1029,7 @@ index 056fa76..d0a79db 100644
  static void
  carousel_position_notified_cb (PhoshLockscreen *self,
                                 GParamSpec      *pspec,
-@@ -571,6 +620,7 @@ carousel_position_notified_cb (PhoshLockscreen *self,
+@@ -571,6 +623,7 @@ carousel_position_notified_cb (PhoshLockscreen *self,
  {
    PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
    g_clear_handle_id (&priv->idle_timer, g_source_remove);
@@ -930,7 +1037,7 @@ index 056fa76..d0a79db 100644
  }
  
  static void
-@@ -857,6 +907,34 @@ phosh_lockscreen_constructed (GObject *object)
+@@ -857,6 +910,34 @@ phosh_lockscreen_constructed (GObject *object)
    g_auto (GStrv) plugins = NULL;
  
    G_OBJECT_CLASS (phosh_lockscreen_parent_class)->constructed (object);
@@ -965,7 +1072,7 @@ index 056fa76..d0a79db 100644
  
    /* window properties */
    gtk_window_set_title (GTK_WINDOW (self), "phosh lockscreen");
-@@ -993,6 +1071,78 @@ phosh_lockscreen_dispose (GObject *object)
+@@ -993,6 +1074,78 @@ phosh_lockscreen_dispose (GObject *object)
  }
  
  
@@ -1044,7 +1151,7 @@ index 056fa76..d0a79db 100644
  static void
  phosh_lockscreen_configured (PhoshLayerSurface *layer_surface)
  {
-@@ -1019,6 +1169,43 @@ phosh_lockscreen_configured (PhoshLayerSurface *layer_surface)
+@@ -1019,6 +1172,56 @@ phosh_lockscreen_configured (PhoshLayerSurface *layer_surface)
      gtk_style_context_remove_class (gtk_widget_get_style_context (priv->box_unlock),
                                      "phosh-lockscreen-compact");
  
@@ -1058,6 +1165,19 @@ index 056fa76..d0a79db 100644
 +    gtk_widget_set_margin_top (priv->box_unlock, MAX (0, ((int) height - 320) / 2));
 +  } else {
 +    gtk_widget_set_valign (priv->box_unlock, GTK_ALIGN_CENTER);
++  }
++
++  /* (L16 downstream) The pages are laid out for the most height anything in the lock screen asks
++   * for, which is more than a short display has: the clock, centred in that, sat low. Its page
++   * gives up the excess at the bottom, so the clock block sits at the middle of what shows (a
++   * little above it: the arrow takes the foot). Measured without that margin, or it would feed on
++   * itself. */
++  {
++    int min = 0, nat = 0;
++
++    gtk_widget_set_margin_bottom (priv->box_info, 0);
++    gtk_widget_get_preferred_height (GTK_WIDGET (priv->carousel), &min, &nat);
++    gtk_widget_set_margin_bottom (priv->box_info, MAX (0, min - (int) height));
 +  }
 +
 +  /* (L16 downstream) and tighter still under 500 px (a 250 % display is 432 px tall): the status,
@@ -1146,7 +1266,7 @@ index b62282f..6654481 100644
  void                 phosh_shell_enable_power_save (PhoshShell *self, gboolean enable);
  gboolean             phosh_shell_started_by_display_manager(PhoshShell *self);
 diff --git a/src/shell.c b/src/shell.c
-index 9ddb87d..3b9ddd2 100644
+index 9ddb87d..125e179 100644
 --- a/src/shell.c
 +++ b/src/shell.c
 @@ -30,6 +30,9 @@
@@ -1199,7 +1319,7 @@ index 9ddb87d..3b9ddd2 100644
    priv->notify_manager = phosh_notify_manager_get_default ();
    g_signal_connect_object (priv->notify_manager,
                             "new-notification",
-@@ -1821,6 +1836,95 @@ phosh_shell_get_lockscreen_manager (PhoshShell *self)
+@@ -1821,6 +1836,100 @@ phosh_shell_get_lockscreen_manager (PhoshShell *self)
    return priv->lockscreen_manager;
  }
  
@@ -1253,6 +1373,11 @@ index 9ddb87d..3b9ddd2 100644
 +
 +  if (over) {
 +    g_return_if_fail (priv->locked);
++    /* no monitor (one just unplugged): nothing to show the camera on, and the exit strip needs it */
++    if (!priv->primary_monitor) {
++      g_warning ("No primary monitor: the lock screen camera is not shown");
++      return;
++    }
 +
 +    if (priv->home) {
 +      phosh_home_set_state (PHOSH_HOME (priv->home), PHOSH_HOME_STATE_FOLDED);
