@@ -10,7 +10,8 @@ E="XDG_RUNTIME_DIR=/run/user/10000 WAYLAND_DISPLAY=wayland-0 DBUS_SESSION_BUS_AD
 u() { su user -c "env $E $*" 2>&1 | grep -v dconf; }
 SID=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$3=="user" {print $1; exit}')
 lockedhint() { loginctl show-session "$SID" -p LockedHint 2>/dev/null | cut -d= -f2; }
-shot() { rm -f "$1"; u "grim -t png $1" | head -2; [ -f "$1" ] || echo "(no screenshot: is the display off?)"; }
+shot() { rm -f "$1"; u "timeout 20 grim -t png $1" | head -2;  # (timeout: grim waits forever on a blank display)
+        [ -f "$1" ] || echo "(no screenshot: is the display off?)"; }
 
 SS="gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver --method"
 LC="gdbus call --session --dest org.l16linux.Shell.LockscreenCamera --object-path /org/l16linux/Shell/LockscreenCamera --method org.l16linux.Shell.LockscreenCamera.Open"
