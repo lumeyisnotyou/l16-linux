@@ -1338,7 +1338,7 @@ index 000000000..b46f03665
 +	if (cap->burst > 31)
 +		return -EINVAL;
 +	ccb_preflash(c, CCB_KIND_CAPTURE);
-+	if (c->exp_auto->cur.val != V4L2_EXPOSURE_MANUAL &&
++	if ((c->exp_auto->cur.val != V4L2_EXPOSURE_MANUAL || (cap->flags & LIGHT_CCB_CAPTURE_STACK)) &&
 +	    (!(cap->flags & LIGHT_CCB_CAPTURE_NO_PRECAPTURE) || ccb_flash_fires(c)))
 +		ccb_send(c, ccb_tid(c, CCB_KIND_CAPTURE), 0x0061, trigger, sizeof(trigger));
 +	memcpy(prev, ccb_module_masks[mod], 3);
