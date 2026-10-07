@@ -1,5 +1,11 @@
 # postmarketOS on the Light L16
 
+> [!WARNING]
+> this is a fork, and a human written message!
+> i don't normally use AI as part of my workflows, this was more of a test since work gave me a claude subscription lmao.
+> i set this fork up to fix a few UX gripes, and will likely human-maintain things to help learn rust.
+> the next lines are from the original fork, and links back to their wiki.
+
 Mainline Linux (msm8996-mainline 6.19) and postmarketOS v26.06 with Phosh on the
 Light L16 camera (codename `lfc`, APQ8096), dual-booted with the stock LightOS
 (Android 6).

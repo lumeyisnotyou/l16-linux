@@ -40,7 +40,7 @@ fn camera_group() -> adw::PreferencesGroup {
     if cams.is_empty() {
         // nothing to choose: say so, and don't offer an empty list
         row.set_sensitive(false);
-        row.set_subtitle("No camera app is installed");
+        row.set_subtitle("No camera app is installed, how'd you do that???");
     } else {
         if let Some(i) = cams.iter().position(|c| c.id == chosen) {
             row.set_selected(i as u32);
@@ -57,7 +57,7 @@ fn camera_group() -> adw::PreferencesGroup {
 
     // the lock screen camera on or off (phosh reads the same key)
     let lock_row = adw::SwitchRow::builder()
-        .title("Camera on the lock screen")
+        .title("Camera Shortcut")
         .subtitle("Open the camera from the lock screen, without unlocking")
         .build();
     switch_settings.bind("lock-screen-camera", &lock_row, "active").build();
