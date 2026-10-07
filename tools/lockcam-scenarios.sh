@@ -34,6 +34,14 @@ selfclose() { camera_up; close_cam; u "$SS org.gnome.ScreenSaver.SetActive false
 behind()    { u "gtk-launch org.l16linux.Settings >/dev/null 2>&1 &"; sleep 4
               camera_up; edge_walk behind; hint
               close_cam; snap behind-closed "LOCK SCREEN: Settings must not show"; kill_app /usr/local/bin/l16-settings; }
+# a camera app left open (unlocked, behind the lock) must not break the lock screen camera: it is closed and the
+# locked one starts (the screenshot: the camera over the lock; one camera process; the lock screen after the exit)
+behindcam() { u "gtk-launch org.l16linux.Nebula >/dev/null 2>&1 &"; sleep 8
+              echo "  camera processes before: $(ps -o args | grep -c '[/]usr/bin/nebula')"
+              camera_up; sleep 4; snap behindcam-up "the camera over the lock, with a live preview (not black)"
+              echo "  camera processes now: $(ps -o args | grep -c '[/]usr/bin/nebula')  (locked: $(ps -o args | grep -c '[/]usr/bin/nebula --locked'))"
+              poke swipe 500 995 500 600; sleep 5; snap behindcam-exit "LOCK SCREEN"; hint
+              echo "  camera processes after the exit: $(ps -o args | grep -c '[/]usr/bin/nebula')"; }
 # a window that opens over the camera ends it: the lock screen
 other()     { camera_up; u "gtk-launch org.l16linux.Gallery >/dev/null 2>&1 &"; sleep 4; snap other-window "LOCK SCREEN: a new window ends the camera"; hint
               kill_app /usr/local/bin/l16-gallery; close_cam; }
@@ -49,7 +57,7 @@ button()    { lock; u "$SS org.gnome.ScreenSaver.SetActive false" >/dev/null; sl
 switchoff() { u "gsettings set org.l16linux.camera lock-screen-camera false" >/dev/null; lock; open_cam; snap switch-off "LOCK SCREEN: the switch is off"; hint
               u "gsettings set org.l16linux.camera lock-screen-camera true" >/dev/null; }
 
-ALL="button edges exitswipe corners longpress power selfclose behind other switchoff"
+ALL="button edges exitswipe corners longpress power selfclose behind behindcam other switchoff"
 for s in ${*:-$ALL}; do
   echo "== $s"
   $s

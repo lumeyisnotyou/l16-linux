@@ -6,9 +6,12 @@
 # opens over the lock screen (shoot and review only); otherwise the screen is only woken.
 #
 # A camera app that is in front takes the button itself (it is the shutter there), so the press is
-# ignored then: the app says it is in front with $XDG_RUNTIME_DIR/l16-camera.front, holding its PID
-# (an older app leaves it empty; that counts while one of the camera apps runs). A marker left by a
-# crashed app doesn't count.
+# ignored then: an app in front keeps a claim, a file named for it holding its PID, in
+# $XDG_RUNTIME_DIR/l16-strip/ (the touch strip's claims); an older app only leaves an empty
+# l16-camera.front, which counts while one of the camera apps runs. Claims and markers of dead
+# processes don't count. While the session is locked this doesn't apply: a camera app left open
+# behind the lock is asleep (it throws away presses made while the screen is off), so every press
+# goes to phosh, which closes it and opens the lock screen camera.
 #
 # This carries no security decision: all a caller of Open() can get is the default camera, and only
 # in the locked mode phosh allows.
@@ -62,7 +65,28 @@ def pid_alive(pid):
 	return True
 
 
+def session_locked():
+	# phosh publishes the lock to logind (LockedHint) on the user's graphical (display) session
+	def run(*args):
+		return subprocess.run(["loginctl", *args], capture_output=True, text=True, timeout=5).stdout.strip()
+	sid = run("show-user", str(os.getuid()), "-p", "Display", "--value")
+	return bool(sid) and run("show-session", sid, "-p", "LockedHint", "--value") == "yes"
+
+
+def claim_alive(runtime_dir):
+	for path in glob.glob(os.path.join(runtime_dir, "l16-strip", "*")):
+		try:
+			word = open(path).read().split()
+		except OSError:
+			continue
+		if word and word[0].isdigit() and pid_alive(int(word[0])):
+			return True
+	return False
+
+
 def camera_in_front(runtime_dir):
+	if claim_alive(runtime_dir):
+		return True
 	try:
 		text = open(os.path.join(runtime_dir, "l16-camera.front")).read().strip()
 	except OSError:
@@ -89,7 +113,12 @@ class Handler:
 			return
 		if self.last is not None and now - self.last < DEBOUNCE_S:
 			return
-		if camera_in_front(self.runtime_dir):
+		try:
+			locked = session_locked()
+		except Exception as e:  # unknown counts as unlocked: the app in front takes the key
+			log("lock state unknown: %s" % e)
+			locked = False
+		if not locked and camera_in_front(self.runtime_dir):
 			return
 		self.last = now
 		try:

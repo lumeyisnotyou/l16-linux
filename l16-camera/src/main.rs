@@ -1751,7 +1751,12 @@ Turn them on in Settings › Privacy › Location.";
         self.thumb.set_paintable(self.preview_still(88.0, 66.0).as_ref());
         if locked() {
             if let Some(t) = self.preview_still(640.0, 480.0) {
-                self.review.borrow_mut().push(t);
+                // about 1.2 MB a shot, held in RAM: the last 50
+                let mut shots = self.review.borrow_mut();
+                shots.push(t);
+                if shots.len() > 50 {
+                    shots.remove(0);
+                }
             }
         }
         if burst > 1 {

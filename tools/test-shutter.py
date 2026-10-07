@@ -35,6 +35,7 @@ class Press(unittest.TestCase):
         self.rd = self.tmp.name
         self.opened = 0
         self.sh.comm_running = lambda comms: False  # no camera app running unless a test says so
+        self.sh.session_locked = lambda: False      # unlocked unless a test says so
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -101,6 +102,38 @@ class Press(unittest.TestCase):
             raise OSError("no gdbus")
         h = self.sh.Handler(self.rd, boom)
         h.event(self.sh.KEY_CAMERA, 1, 100.0)  # must not raise
+
+    def claim(self, name, content):
+        os.makedirs(os.path.join(self.rd, "l16-strip"), exist_ok=True)
+        with open(os.path.join(self.rd, "l16-strip", name), "w") as f:
+            f.write(content)
+
+    def test_a_live_claim_of_an_app_means_it_is_in_front(self):
+        # the apps' own marker is empty: their PID is in their claim (l16-strip/<app>)
+        self.claim("nebula", str(os.getpid()))
+        self.press()
+        self.assertEqual(self.opened, 0)
+
+    def test_a_claim_of_a_dead_process_does_not_count(self):
+        self.claim("nebula", str(dead_pid()))
+        self.press()
+        self.assertEqual(self.opened, 1)
+
+    def test_locked_the_press_always_asks_phosh_even_with_a_camera_left_open(self):
+        # an unlocked camera app asleep behind the lock still says it is in front, and does not take the key
+        self.sh.session_locked = lambda: True
+        self.claim("nebula", str(os.getpid()))
+        self.marker(str(os.getpid()))
+        self.press()
+        self.assertEqual(self.opened, 1)
+
+    def test_a_failing_lock_check_counts_as_unlocked(self):
+        def boom():
+            raise OSError("no loginctl")
+        self.sh.session_locked = boom
+        self.claim("nebula", str(os.getpid()))
+        self.press()  # must not raise; the camera in front takes the key
+        self.assertEqual(self.opened, 0)
 
     def test_importing_the_script_does_not_run_it(self):
         self.assertTrue(callable(self.sh.main))

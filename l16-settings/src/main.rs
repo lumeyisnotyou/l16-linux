@@ -25,7 +25,7 @@ fn installed_apps() -> Vec<cameras::App> {
 fn camera_group() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Camera")
-        .description("Opened by the gallery's camera button")
+        .description("Opened by the gallery's camera button, the shutter button, and from the lock screen")
         .build();
     let settings = gio::Settings::new(SCHEMA);
     // (the combo's handler below takes `settings`)

@@ -223,3 +223,28 @@ unlocked shutter press; and the full unlock with the keypad after a locked shoot
 2. Phosh patch, with a stand-in camera, tested on the device (the risky half).
 3. Camera apps' `--locked` mode.
 4. `l16-shutter`, and the lock-screen button.
+
+## As built (deviations from the design above, and why)
+
+- **Shutter listener:** a Python user service in `device-light-lfc` (`light-lfc-shutter`), not a Rust
+  package: one package fewer to build and vet. It asks logind (the display session's `LockedHint`)
+  whether the session is locked: locked, every press goes to phosh (a camera app left open behind the
+  lock is asleep and throws presses away); unlocked, a camera app in front (a live claim in
+  `$XDG_RUNTIME_DIR/l16-strip/`, or the older empty `l16-camera.front` while a camera app runs) takes
+  the key itself.
+- **Launch watch:** 15 s, not 5 s (a camera's cold start is 4-6 s, and a camera app left open is closed
+  first, a few seconds more). A camera that turns up after the watch is terminated.
+- **A camera app left open:** when the lock screen camera is opened, any window of the camera's app id
+  that is already open is asked to close first, and the locked camera starts when it has (two instances
+  can't hold the camera); those windows are never mistaken for the locked camera.
+- **Lock screen button:** top right of the clock page (the bottom hangs off a 540 px display), made in
+  C, not the template (binding it there made GTK stop assigning the template's children).
+- **This session's shots:** a review page opened from the thumbnail (back, previous/next, swipe), the
+  last 50 preview frames held in RAM (not a strip), in both camera apps. Over the lock, Nebula has no
+  close button: the exit is phosh's swipe up from the bottom edge.
+- **Not implemented:** re-covering when anything calls `lock` again (the shell stays locked: not a
+  bypass), and re-covering when a new layer surface maps (phosh can't see other clients' layer
+  surfaces); every other window or focus change re-covers.
+- **The passcode page** is laid out side by side on a landscape display (text and Unlock left, the
+  keypad right), placed by the display's real height, with a tint that deepens as the swipe goes up.
+
