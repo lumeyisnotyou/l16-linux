@@ -827,7 +827,7 @@ index 06c9b84..0da7627 100644
 +
  G_END_DECLS
 diff --git a/src/lockscreen.c b/src/lockscreen.c
-index 056fa76..396d576 100644
+index 056fa76..ae8b95e 100644
 --- a/src/lockscreen.c
 +++ b/src/lockscreen.c
 @@ -15,6 +15,7 @@
@@ -846,10 +846,11 @@ index 056fa76..396d576 100644
    guint idle_timer;
    gint64 last_input;
    PhoshAuth          *auth;
-@@ -208,6 +210,17 @@ on_swipe_gesture_begin (PhoshLockscreen  *self,
+@@ -208,6 +210,18 @@ on_swipe_gesture_begin (PhoshLockscreen  *self,
  }
  
  
++
 +static void
 +on_camera_clicked (PhoshLockscreen *self)
 +{
@@ -864,7 +865,7 @@ index 056fa76..396d576 100644
  static void
  phosh_lockscreen_map (GtkWidget *widget)
  {
-@@ -218,6 +231,15 @@ phosh_lockscreen_map (GtkWidget *widget)
+@@ -218,6 +232,15 @@ phosh_lockscreen_map (GtkWidget *widget)
  
    phosh_layer_surface_set_stacked_below (PHOSH_LAYER_SURFACE (priv->background),
                                           PHOSH_LAYER_SURFACE (self));
@@ -880,15 +881,37 @@ index 056fa76..396d576 100644
  }
  
  
-@@ -1170,6 +1192,8 @@ phosh_lockscreen_class_init (PhoshLockscreenClass *klass)
-                                                 long_press_del_gesture);
-   gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_submit);
-   gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_keyboard);
-+  gtk_widget_class_bind_template_child_private (widget_class, PhoshLockscreen, btn_camera);
-+  gtk_widget_class_bind_template_callback (widget_class, on_camera_clicked);
+@@ -858,6 +881,30 @@ phosh_lockscreen_constructed (GObject *object)
  
-   gtk_widget_class_bind_template_callback (widget_class, delete_button_clicked_cb);
-   gtk_widget_class_bind_template_callback (widget_class, input_changed_cb);
+   G_OBJECT_CLASS (phosh_lockscreen_parent_class)->constructed (object);
+ 
++  /* (L16 downstream) The camera button is made here, not in the template: binding it as a
++   * template child made GTK stop assigning the template's children (no keypad, no entry). */
++  {
++    GtkWidget *image = gtk_image_new_from_icon_name ("camera-photo-symbolic", GTK_ICON_SIZE_BUTTON);
++
++    gtk_image_set_pixel_size (GTK_IMAGE (image), 32);
++    gtk_widget_set_visible (image, TRUE);
++    priv->btn_camera = gtk_button_new ();
++    gtk_container_add (GTK_CONTAINER (priv->btn_camera), image);
++    gtk_widget_set_halign (priv->btn_camera, GTK_ALIGN_END);
++    gtk_widget_set_valign (priv->btn_camera, GTK_ALIGN_START);
++    gtk_widget_set_margin_start (priv->btn_camera, 12);
++    gtk_widget_set_margin_end (priv->btn_camera, 12);
++    gtk_widget_set_margin_bottom (priv->btn_camera, 12);
++    gtk_widget_set_margin_top (priv->btn_camera, 44);
++    gtk_style_context_add_class (gtk_widget_get_style_context (priv->btn_camera),
++                                 "phosh-lockscreen-camera");
++    gtk_style_context_add_class (gtk_widget_get_style_context (priv->btn_camera), "circular");
++    atk_object_set_name (gtk_widget_get_accessible (priv->btn_camera), _("Camera"));
++    g_signal_connect_swapped (priv->btn_camera, "clicked", G_CALLBACK (on_camera_clicked), self);
++    gtk_box_pack_start (GTK_BOX (priv->box_info), priv->btn_camera, FALSE, FALSE, 0);
++    gtk_widget_set_visible (priv->btn_camera, FALSE);
++  }
++
+   /* window properties */
+   gtk_window_set_title (GTK_WINDOW (self), "phosh lockscreen");
+   gtk_window_set_decorated (GTK_WINDOW (self), FALSE);
 diff --git a/src/meson.build b/src/meson.build
 index 7e11919..160127d 100644
 --- a/src/meson.build
@@ -1126,42 +1149,3 @@ index 6655188..4781d6d 100644
 +  padding: 0;
 +  border-radius: 28px;
 +}
-diff --git a/src/ui/lockscreen.ui b/src/ui/lockscreen.ui
-index cd4ac56..aca318a 100644
---- a/src/ui/lockscreen.ui
-+++ b/src/ui/lockscreen.ui
-@@ -103,6 +103,34 @@
-                     <property name="pack-type">end</property>
-                   </packing>
-                 </child>
-+                <child>
-+                  <object class="GtkButton" id="btn_camera">
-+                    <property name="visible">0</property>
-+                    <property name="halign">end</property>
-+                    <property name="valign">end</property>
-+                    <property name="margin">12</property>
-+                    <signal name="clicked" handler="on_camera_clicked" swapped="yes"/>
-+                    <child>
-+                      <object class="GtkImage">
-+                        <property name="visible">1</property>
-+                        <property name="icon-name">camera-photo-symbolic</property>
-+                        <property name="pixel-size">32</property>
-+                      </object>
-+                    </child>
-+                    <style>
-+                      <class name="phosh-lockscreen-camera"/>
-+                      <class name="circular"/>
-+                    </style>
-+                    <child internal-child="accessible">
-+                      <object class="AtkObject">
-+                        <property name="AtkObject::accessible-name" translatable="yes">Camera</property>
-+                      </object>
-+                    </child>
-+                  </object>
-+                  <packing>
-+                    <property name="pack-type">end</property>
-+                  </packing>
-+                </child>
-                 <child type="center">
-                   <object class="GtkBox" id="box_datetime">
-                     <property name="visible">1</property>
