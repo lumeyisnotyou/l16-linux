@@ -24,9 +24,9 @@ edge_walk() { poke swipe 500 5 500 400;    snap "$1-top"    "camera only: no sha
 edges()     { camera_up; edge_walk edges; hint; close_cam; }
 corners()   { camera_up; poke corners; snap corners "camera only"; hint; close_cam; }
 longpress() { camera_up; poke longpress 500 990; poke longpress 500 10; snap longpress "camera only: no menu or keyboard"; hint; close_cam; }
-# the power button blanks the screen; waking it must show the lock screen, not the camera
+# the power button blanks the screen; waking it brings the camera back (it was open when the screen went)
 power()     { camera_up; u "$SS org.gnome.ScreenSaver.SetActive true" >/dev/null; sleep 3; snap power-blank "(the display is off: no screenshot is expected)"
-              u "$SS org.gnome.ScreenSaver.SetActive false" >/dev/null; sleep 3; snap power-wake "LOCK SCREEN, not the camera"; hint; close_cam; }
+              u "$SS org.gnome.ScreenSaver.SetActive false" >/dev/null; sleep 3; snap power-wake "the camera again, with a live preview (not the lock screen)"; hint; close_cam; }
 # the camera closes by itself: the lock screen straight away
 selfclose() { camera_up; close_cam; u "$SS org.gnome.ScreenSaver.SetActive false" >/dev/null; sleep 1   # (the lock screen blanks itself when idle)
               snap selfclose "LOCK SCREEN"; hint; }

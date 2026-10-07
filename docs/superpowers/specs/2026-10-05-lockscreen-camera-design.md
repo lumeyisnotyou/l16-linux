@@ -88,7 +88,6 @@ happens:
 
 - the toplevel unmaps (camera closed), loses activation, or leaves fullscreen;
 - another toplevel becomes activated or mapped;
-- the screen blanks (idle or power key), or the display is turned off;
 - the 5 s launch watch expires without the window (stays locked: a failed launch is never a bypass);
 - anything calls `lock` again.
 
@@ -116,8 +115,8 @@ Both Nebula and Viewfinder add a `--locked` mode and a `Locked` desktop action:
 - a strip of this session's shots: the preview frame kept at each shutter (not the processed photo,
   since LRI decoding is slow), held in memory and dropped on exit;
 - the photos are saved as usual to `~/Pictures/L16`, so they appear in the gallery after unlock;
-- exits when the screen blanks (they already stop their streams then; with `--locked` they close, so
-  the lock comes back).
+- sleeps when the screen blanks, as the camera does unlocked (the streams stop, the preview comes
+  back on waking); it does not close.
 
 ### 4. Settings and schema
 
@@ -155,7 +154,8 @@ closing it must land on the lock screen. Three ways out, all ending locked:
    code is never involved and a swipe can't open it.
 2. **A close button in the camera** (kept in `--locked` mode, where the system panel is otherwise
    gone): it quits the app, and phosh re-covers when the window unmaps.
-3. **The power button**: blanks the screen, and phosh re-covers.
+3. **The power button**: blanks the screen; the camera sleeps with it and is there again on waking
+   (see As built).
 
 Rules: the lock screen is shown the moment the exit gesture completes, even if the camera is slow or
 hung (it is covered, not exposed); phosh asks it to close, and if the window is still there after
@@ -248,3 +248,7 @@ unlocked shutter press; and the full unlock with the keypad after a locked shoot
 - **The passcode page** is laid out side by side on a landscape display (text and Unlock left, the
   keypad right), placed by the display's real height, with a tint that deepens as the swipe goes up.
 
+- **The power button no longer ends the camera (2026-10-07):** the camera that was over the lock when the
+  screen blanked is still over it when the screen wakes. phosh does not re-cover on a blank, and
+  Nebula's `--locked` mode sleeps and wakes with the screen like the unlocked camera instead of
+  closing. Unlocking, another window, the exit swipe and the camera closing still re-cover.
