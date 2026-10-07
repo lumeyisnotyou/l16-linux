@@ -90,6 +90,8 @@ window.camera { background: #000; }
 .assist-badge { color: #fff; font-size: 15px; }
 .burst-badge { color: #fff; font-size: 13px; font-weight: 600; border: 1px solid #fff;
     border-radius: 3px; padding: 0 4px; }
+.lk { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.3); border-radius: 10px;
+    color: #fff; font-size: 20px; min-width: 64px; min-height: 64px; padding: 0; }
 .settings { background: #000; }
 .settings list { background: #000; }
 .settings row, .chooser row { padding: 14px 32px; border-bottom: 1px solid rgba(255,255,255,0.15);
@@ -602,6 +604,9 @@ struct App {
     photo_args: RefCell<HashMap<PathBuf, Vec<String>>>,
     hud_box: gtk::Box,
     settings_page: gtk::Overlay,
+    // over the lock screen (`--locked`): this session's shots, as the preview was at each shutter
+    // (in memory only; never a stored photo)
+    review: Rc<RefCell<Vec<gdk::Texture>>>,
     last_saved: RefCell<String>,
     // logind's sleep inhibitor while photos are on their way (dropped: released)
     sleep_inhibitor: RefCell<Option<std::os::fd::OwnedFd>>,
@@ -1744,6 +1749,11 @@ Turn them on in Settings › Privacy › Location.";
             (st.zoom, BURSTS[st.burst], st.seq, st.mode == Mode::Auto && st.live_iso > 400, st.stacked)
         };
         self.thumb.set_paintable(self.preview_still(88.0, 66.0).as_ref());
+        if locked() {
+            if let Some(t) = self.preview_still(640.0, 480.0) {
+                self.review.borrow_mut().push(t);
+            }
+        }
         if burst > 1 {
             self.start_burst_screen(burst);
         } else {
@@ -2403,6 +2413,15 @@ Turn them on in Settings › Privacy › Location.";
             let st = self.st.borrow();
             (st.asleep, st.busy || st.saving > 0 || st.counting)
         };
+        // over the lock the camera does not wait for the screen to come back: it closes, and
+        // the lock screen is what is there (photos on their way finish first)
+        if locked() && !screen && !busy {
+            eprintln!("l16-camera: locked and the screen is off: closing");
+            if let Some(w) = self.view.root().and_downcast::<gtk::Window>() {
+                w.close();
+            }
+            return;
+        }
         if !on && !asleep && !busy {
             eprintln!("l16-camera: sleep (screen {screen}, away {away}): stopping");
             self.st.borrow_mut().asleep = true;
@@ -3149,7 +3168,9 @@ fn build(gapp: &gtk::Application) {
             eprintln!("launching the gallery: {e}");
         }
     });
-    thumb_box.add_controller(open_gallery);
+    if !locked() {
+        thumb_box.add_controller(open_gallery);
+    }
     let dial = |size: i32| {
         let d = Canvas::new();
         d.set_size_request(size, size);
@@ -3210,7 +3231,9 @@ fn build(gapp: &gtk::Application) {
     let fill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     fill.set_hexpand(true);
     bar.append(&fill);
-    bar.append(&settings_btn);
+    if !locked() {
+        bar.append(&settings_btn);
+    }
     bar.append(&close_btn);
 
     // the settings screen (OpenLight's: a list of title, explanation and value)
@@ -3450,6 +3473,89 @@ fn build(gapp: &gtk::Application) {
     root.add_overlay(&battery_screen);
     root.add_overlay(&hot_screen);
     root.add_overlay(&settings_page);
+    // over the lock the system panel is gone: a close button is the way out (besides phosh's
+    // exit swipe and the power button)
+    let lk_key = |icon: char, h: gtk::Align, v: gtk::Align| {
+        let b = gtk::Button::new();
+        b.set_child(Some(&icons::label(icon)));
+        b.add_css_class("lk");
+        b.set_halign(h);
+        b.set_valign(v);
+        b.set_margin_start(10);
+        b.set_margin_end(10);
+        b.set_margin_top(10);
+        b
+    };
+    let review: Rc<RefCell<Vec<gdk::Texture>>> = Rc::new(RefCell::new(Vec::new()));
+    if locked() {
+        // bottom left: the top left is the device status
+        let x = lk_key(icons::CLOSE, gtk::Align::Start, gtk::Align::End);
+        x.set_margin_bottom(60);
+        let w = window.clone();
+        x.connect_clicked(move |_| w.close());
+        root.add_overlay(&x);
+        // this session's shots: a tap on the thumbnail opens them, newest first; a swipe or the
+        // arrows move between them; the back button returns to the camera
+        let page = gtk::Overlay::new();
+        page.add_css_class("settings");
+        page.set_visible(false);
+        let pic = gtk::Picture::new();
+        pic.set_content_fit(gtk::ContentFit::Contain);
+        page.set_child(Some(&pic));
+        let count = gtk::Label::new(None);
+        count.add_css_class("status");
+        count.set_halign(gtk::Align::Center);
+        count.set_valign(gtk::Align::Start);
+        count.set_margin_top(10);
+        page.add_overlay(&count);
+        let back = lk_key(icons::ARROW_LEFT, gtk::Align::Start, gtk::Align::Start);
+        let prev = lk_key(icons::ARROW_LEFT, gtk::Align::Start, gtk::Align::Center);
+        let next = lk_key(icons::CHEVRON_RIGHT, gtk::Align::End, gtk::Align::Center);
+        page.add_overlay(&back);
+        page.add_overlay(&prev);
+        page.add_overlay(&next);
+        let at = Rc::new(Cell::new(0usize));
+        let show = {
+            let (pic, count, shots, at) = (pic.clone(), count.clone(), review.clone(), at.clone());
+            Rc::new(move |i: usize| {
+                let s = shots.borrow();
+                if s.is_empty() {
+                    return;
+                }
+                let i = i.min(s.len() - 1);
+                at.set(i);
+                pic.set_paintable(Some(&s[i]));
+                count.set_label(&format!("{} / {}", i + 1, s.len()));
+            })
+        };
+        let p = page.clone();
+        back.connect_clicked(move |_| p.set_visible(false));
+        let (sh, a) = (show.clone(), at.clone());
+        prev.connect_clicked(move |_| sh(a.get().saturating_sub(1)));
+        let (sh, a) = (show.clone(), at.clone());
+        next.connect_clicked(move |_| sh(a.get() + 1));
+        let swipe = gtk::GestureSwipe::new();
+        let (sh, a) = (show.clone(), at.clone());
+        swipe.connect_swipe(move |_, vx, _| {
+            if vx > 200.0 {
+                sh(a.get().saturating_sub(1));
+            } else if vx < -200.0 {
+                sh(a.get() + 1);
+            }
+        });
+        page.add_controller(swipe);
+        let open = gtk::GestureClick::new();
+        let (p, shots, sh) = (page.clone(), review.clone(), show.clone());
+        open.connect_released(move |_, _, _, _| {
+            let n = shots.borrow().len();
+            if n > 0 {
+                p.set_visible(true);
+                sh(n - 1);
+            }
+        });
+        thumb_box.add_controller(open);
+        root.add_overlay(&page);
+    }
     window.set_child(Some(&root));
 
     let (stage_tx, stage_rx) = mpsc::channel();
@@ -3603,6 +3709,7 @@ fn build(gapp: &gtk::Application) {
         bottom,
         shutter,
         thumb,
+        review: review.clone(),
         thumb_spin,
         blackout,
         burst_screen,
@@ -4110,6 +4217,15 @@ fn take_camera() -> bool {
 // the window closed and the streams stopping
 static CLOSING: AtomicBool = AtomicBool::new(false);
 
+// started over the lock screen (`l16-camera --locked`): shoot only. No gallery, no settings, no
+// system panel; a close button, and the app closes when the screen blanks. The thumbnail is
+// only ever this session's last frame (the preview as it was at the shutter), never a stored photo.
+static LOCKED: AtomicBool = AtomicBool::new(false);
+
+fn locked() -> bool {
+    LOCKED.load(Ordering::Relaxed)
+}
+
 fn main() -> glib::ExitCode {
     // started from the app grid, the output went to the console: to a file instead
     // (~/.cache/l16-camera.log; appended to, as a launch that only hands over to a running
@@ -4127,14 +4243,21 @@ fn main() -> glib::ExitCode {
             }
         }
     }
-    eprintln!("l16-camera: started (pid {})", std::process::id());
+    let args: Vec<String> = std::env::args().filter(|a| a != "--locked").collect();
+    if args.len() != std::env::args().count() {
+        LOCKED.store(true, Ordering::Relaxed);
+    }
+    eprintln!("l16-camera: started (pid {}{})", std::process::id(), if locked() { ", locked" } else { "" });
     // GTK redraws the whole window each frame: redrawing only what changed (the preview)
     // left the badges over it as flickering black bars
     if std::env::var_os("GSK_DEBUG").is_none() {
         std::env::set_var("GSK_DEBUG", "full-redraw");
     }
     gst::init().expect("gstreamer");
-    let app = gtk::Application::builder().application_id("org.l16linux.Camera").build();
+    // locked: a process of its own, never a hand-over to a running camera (that one has the
+    // gallery and the settings); it waits for the camera when that is held
+    let flags = if locked() { gtk::gio::ApplicationFlags::NON_UNIQUE } else { gtk::gio::ApplicationFlags::empty() };
+    let app = gtk::Application::builder().application_id("org.l16linux.Camera").flags(flags).build();
     // launched again while running (the gallery's camera button): back to the window there is
     app.connect_activate(|app| {
         // logged: an activation while the app was closing (its streams stopping) left the
@@ -4149,5 +4272,5 @@ fn main() -> glib::ExitCode {
             None => build(app),
         }
     });
-    app.run()
+    app.run_with_args(&args)
 }

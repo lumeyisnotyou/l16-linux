@@ -7,3 +7,8 @@ Icon=l16-camera
 Categories=Graphics;Photography;
 X-L16-Camera=true
 X-Purism-FormFactor=Workstation;Mobile;
+Actions=Locked;
+
+[Desktop Action Locked]
+Name=Locked camera
+Exec=l16-camera --locked
