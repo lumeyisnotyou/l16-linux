@@ -106,12 +106,11 @@ partition, ext4, no encryption by default, the 64 GiB dual-boot partition).
 - [x] UFS at boot: "hw clk gating enabled failed": the v2 controller has no UniPro clock
       gating attributes (stock enables only the UTP gating); kernel r95 skips them on v2
 - [ ] Kernel tracing (CONFIG_FTRACE) is on for debugging suspend; drop it if it costs anything
-- [ ] Display at 250 % (768 x 432 logical px; the session default is 200 %): Nebula already
-      fits its layout to any scale (nebula fit.rs), but phosh's lock screen keypad needs more
-      than 432 px of height (its bottom row and the Unlock button fall off the screen), and the
-      phrog login screen too (it keeps 200 % through /usr/share/phrog/phoc.ini). Tighten the
-      lock keypad (lockscreen-compact-keypad.patch) for short displays, then set phoc.ini's
-      scale to 2.5
+- [x] Display at 250 % (768 x 432 logical px) is the session default (device-light-lfc r39): Nebula
+      fits its layout to any scale (fit.rs) and phosh's lock screen shows its passcode page side by
+      side (text and Unlock on the left, the keypad on the right: lockscreen.c set_unlock_wide), which
+      fits 432 px at full-size keys. The phrog login screen keeps 200 % (phoc-greeter.ini): its
+      unlock button doesn't fit
 
 - [ ] Power-key long press: the power menu once froze on its first frame during a 10 s hold;
       not seen on a short hold since

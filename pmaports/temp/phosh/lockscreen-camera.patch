@@ -200,10 +200,10 @@ index 0000000..5bf6b86
 +G_END_DECLS
 diff --git a/src/lockscreen-camera-manager.c b/src/lockscreen-camera-manager.c
 new file mode 100644
-index 0000000..63059ca
+index 0000000..ff157fb
 --- /dev/null
 +++ b/src/lockscreen-camera-manager.c
-@@ -0,0 +1,527 @@
+@@ -0,0 +1,528 @@
 +/*
 + * Copyright (C) 2026 lumey
 + *
@@ -241,7 +241,8 @@ index 0000000..63059ca
 +#define CAMERA_KEY "X-L16-Camera"
 +#define LOCKED_ACTION "Locked"
 +
-+#define LAUNCH_TIMEOUT_SECONDS 5
++/* a camera's cold start (the hardware streams) takes 4-6 s: the watch must outlast it */
++#define LAUNCH_TIMEOUT_SECONDS 10
 +#define ACTIVATE_TIMEOUT_SECONDS 2
 +#define CLOSE_GRACE_SECONDS 3
 +
@@ -827,7 +828,7 @@ index 06c9b84..0da7627 100644
 +
  G_END_DECLS
 diff --git a/src/lockscreen.c b/src/lockscreen.c
-index 056fa76..ae8b95e 100644
+index 056fa76..d0a79db 100644
 --- a/src/lockscreen.c
 +++ b/src/lockscreen.c
 @@ -15,6 +15,7 @@
@@ -838,15 +839,26 @@ index 056fa76..ae8b95e 100644
  #include "lockscreen-priv.h"
  #include "notifications/notify-manager.h"
  #include "notifications/notification-frame.h"
-@@ -100,6 +101,7 @@ typedef struct {
+@@ -38,6 +39,7 @@
+ #define LOCKSCREEN_SMALL_DATE_AND_TIME_CLASS "p-small"
+ 
+ #define LOCKSCREEN_SMALL_DISPLAY 700
++#define LOCKSCREEN_TIGHT_DISPLAY 500
+ 
+ /**
+  * PhoshLockscreen:
+@@ -100,6 +102,10 @@ typedef struct {
    GtkWidget          *lbl_unlock_status;
    GtkWidget          *btn_submit;
    GtkWidget          *btn_keyboard;
 +  GtkWidget          *btn_camera;
++  /* (L16 downstream) the unlock page side by side on a landscape display */
++  gboolean            unlock_wide;
++  GtkWidget          *unlock_left;
    guint idle_timer;
    gint64 last_input;
    PhoshAuth          *auth;
-@@ -208,6 +210,18 @@ on_swipe_gesture_begin (PhoshLockscreen  *self,
+@@ -208,6 +214,18 @@ on_swipe_gesture_begin (PhoshLockscreen  *self,
  }
  
  
@@ -865,7 +877,7 @@ index 056fa76..ae8b95e 100644
  static void
  phosh_lockscreen_map (GtkWidget *widget)
  {
-@@ -218,6 +232,15 @@ phosh_lockscreen_map (GtkWidget *widget)
+@@ -218,6 +236,15 @@ phosh_lockscreen_map (GtkWidget *widget)
  
    phosh_layer_surface_set_stacked_below (PHOSH_LAYER_SURFACE (priv->background),
                                           PHOSH_LAYER_SURFACE (self));
@@ -881,10 +893,49 @@ index 056fa76..ae8b95e 100644
  }
  
  
-@@ -858,6 +881,30 @@ phosh_lockscreen_constructed (GObject *object)
+@@ -564,6 +591,28 @@ wall_clock_notify_cb (PhoshLockscreen *self,
+ }
+ 
+ 
++/* (L16 downstream) a tint over the wallpaper, deeper the nearer the passcode page: it reads
++ * better over a pale wallpaper, and the swipe shows where it is going. Drawn before the content. */
++static gboolean
++on_draw_tint (GtkWidget *widget, cairo_t *cr, gpointer data)
++{
++  PhoshLockscreen *self = PHOSH_LOCKSCREEN (widget);
++  PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
++  double pos;
++
++  if (!priv->carousel)
++    return FALSE;
++
++  pos = CLAMP (hdy_carousel_get_position (HDY_CAROUSEL (priv->carousel)), 0.0, 1.0);
++  if (pos > 0.0) {
++    cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 0.5 * pos);
++    cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
++    cairo_paint (cr);
++  }
++  return FALSE;
++}
++
++
+ static void
+ carousel_position_notified_cb (PhoshLockscreen *self,
+                                GParamSpec      *pspec,
+@@ -571,6 +620,7 @@ carousel_position_notified_cb (PhoshLockscreen *self,
+ {
+   PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
+   g_clear_handle_id (&priv->idle_timer, g_source_remove);
++  gtk_widget_queue_draw (GTK_WIDGET (self));
+ }
+ 
+ static void
+@@ -857,6 +907,34 @@ phosh_lockscreen_constructed (GObject *object)
+   g_auto (GStrv) plugins = NULL;
  
    G_OBJECT_CLASS (phosh_lockscreen_parent_class)->constructed (object);
- 
++  g_signal_connect (self, "draw", G_CALLBACK (on_draw_tint), NULL);
++
 +  /* (L16 downstream) The camera button is made here, not in the template: binding it as a
 +   * template child made GTK stop assigning the template's children (no keypad, no entry). */
 +  {
@@ -907,11 +958,136 @@ index 056fa76..ae8b95e 100644
 +    g_signal_connect_swapped (priv->btn_camera, "clicked", G_CALLBACK (on_camera_clicked), self);
 +    gtk_box_pack_start (GTK_BOX (priv->box_info), priv->btn_camera, FALSE, FALSE, 0);
 +    gtk_widget_set_visible (priv->btn_camera, FALSE);
++    /* a touch button: no keyboard focus, so no focus ring left on it after the camera closes */
++    gtk_widget_set_can_focus (priv->btn_camera, FALSE);
++    gtk_widget_set_focus_on_click (priv->btn_camera, FALSE);
 +  }
-+
+ 
    /* window properties */
    gtk_window_set_title (GTK_WINDOW (self), "phosh lockscreen");
-   gtk_window_set_decorated (GTK_WINDOW (self), FALSE);
+@@ -993,6 +1071,78 @@ phosh_lockscreen_dispose (GObject *object)
+ }
+ 
+ 
++/*
++ * (L16 downstream) On a landscape display the unlock page is side by side: the status, the PIN entry
++ * and the unlock button in a column on the left, the keypad on the right. The keypad then keeps its
++ * stock size even on a 432 px display (250 %), where all of it stacked does not fit. The widgets are
++ * only moved: box_unlock stays the page, and the template's pointers stay good.
++ */
++static void
++move_to (GtkWidget *child, GtkWidget *to, int pos)
++{
++  GtkWidget *from = gtk_widget_get_parent (child);
++
++  g_object_ref (child);
++  gtk_container_remove (GTK_CONTAINER (from), child);
++  gtk_box_pack_start (GTK_BOX (to), child, FALSE, FALSE, 0);
++  if (pos >= 0)
++    gtk_box_reorder_child (GTK_BOX (to), child, pos);
++  g_object_unref (child);
++}
++
++
++static void
++set_unlock_wide (PhoshLockscreen *self, gboolean wide)
++{
++  PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
++  GtkWidget *submit_box = gtk_widget_get_parent (priv->btn_submit);
++
++  if (wide == priv->unlock_wide)
++    return;
++  priv->unlock_wide = wide;
++
++  if (wide) {
++    GtkWidget *left = gtk_box_new (GTK_ORIENTATION_VERTICAL, 12);
++
++    gtk_widget_set_valign (left, GTK_ALIGN_CENTER);
++    gtk_widget_set_visible (left, TRUE);
++    gtk_box_pack_start (GTK_BOX (priv->box_unlock), left, FALSE, FALSE, 0);
++    gtk_box_reorder_child (GTK_BOX (priv->box_unlock), left, 0);
++    move_to (priv->lbl_unlock_status, left, -1);
++    move_to (priv->entry_pin, left, -1);
++    move_to (submit_box, left, -1);
++    priv->unlock_left = left;
++    gtk_orientable_set_orientation (GTK_ORIENTABLE (priv->box_unlock), GTK_ORIENTATION_HORIZONTAL);
++    gtk_box_set_spacing (GTK_BOX (priv->box_unlock), 48);
++    gtk_widget_set_valign (priv->keypad_revealer, GTK_ALIGN_CENTER);
++  } else {
++    move_to (priv->lbl_unlock_status, priv->box_unlock, 0);
++    move_to (priv->entry_pin, priv->box_unlock, 1);
++    move_to (submit_box, priv->box_unlock, -1);
++    gtk_widget_destroy (priv->unlock_left);
++    priv->unlock_left = NULL;
++    gtk_orientable_set_orientation (GTK_ORIENTABLE (priv->box_unlock), GTK_ORIENTATION_VERTICAL);
++    gtk_box_set_spacing (GTK_BOX (priv->box_unlock), 12);
++    gtk_widget_set_valign (priv->keypad_revealer, GTK_ALIGN_FILL);
++  }
++}
++
++
++static void
++set_digit_height (GtkWidget *button, gpointer data)
++{
++  GtkWidget *label;
++
++  if (!GTK_IS_BUTTON (button))
++    return;
++
++  label = gtk_bin_get_child (GTK_BIN (button));
++  /* the digits (the template gives each label a 48 px minimum height; the icon buttons have none) */
++  if (GTK_IS_LABEL (label))
++    gtk_widget_set_size_request (label, 48, GPOINTER_TO_INT (data));
++}
++
++
+ static void
+ phosh_lockscreen_configured (PhoshLayerSurface *layer_surface)
+ {
+@@ -1019,6 +1169,43 @@ phosh_lockscreen_configured (PhoshLayerSurface *layer_surface)
+     gtk_style_context_remove_class (gtk_widget_get_style_context (priv->box_unlock),
+                                     "phosh-lockscreen-compact");
+ 
++  /* (L16 downstream) side by side when landscape; stacked (and tightened by height) otherwise */
++  set_unlock_wide (self, phosh_layer_surface_get_configured_width (layer_surface) >= height * 3 / 2);
++  /* The page is laid out taller than a short display (something in the lock screen asks for about
++   * 630 px), so centred it lands low and its bottom is cut off: side by side, it is put near the top
++   * instead, by the display's real height (the content is about 320 px tall) */
++  if (priv->unlock_wide) {
++    gtk_widget_set_valign (priv->box_unlock, GTK_ALIGN_START);
++    gtk_widget_set_margin_top (priv->box_unlock, MAX (0, ((int) height - 320) / 2));
++  } else {
++    gtk_widget_set_valign (priv->box_unlock, GTK_ALIGN_CENTER);
++  }
++
++  /* (L16 downstream) and tighter still under 500 px (a 250 % display is 432 px tall): the status,
++   * the entry, the keypad and the unlock button all have to fit */
++  {
++    gboolean tight = !priv->unlock_wide && height < LOCKSCREEN_TIGHT_DISPLAY;
++    GtkStyleContext *ctx = gtk_widget_get_style_context (priv->box_unlock);
++
++    if (tight)
++      gtk_style_context_add_class (ctx, "phosh-lockscreen-tight");
++    else
++      gtk_style_context_remove_class (ctx, "phosh-lockscreen-tight");
++    if (!priv->unlock_wide)
++      gtk_box_set_spacing (GTK_BOX (priv->box_unlock), tight ? 4 : 12);
++    gtk_widget_set_margin_top (priv->entry_pin, tight ? 0 : 12);
++    gtk_widget_set_margin_bottom (priv->entry_pin, tight ? 0 : 12);
++    gtk_widget_set_margin_top (priv->keypad, tight ? 0 : 12);
++    gtk_widget_set_margin_bottom (priv->keypad, tight ? 0 : 12);
++
++    /* the digits' rows: stock 48 px, 40 px under 600 (a 200 % display: the unlock button fits),
++     * 30 px under 500 (250 %) */
++    gtk_container_foreach (GTK_CONTAINER (priv->keypad), set_digit_height,
++                           GINT_TO_POINTER (priv->unlock_wide ? 48 :
++                                            height < LOCKSCREEN_TIGHT_DISPLAY ? 30 :
++                                            height < LOCKSCREEN_TIGHT_DISPLAY + 100 ? 40 : 48));
++  }
++
+   PHOSH_LAYER_SURFACE_CLASS (phosh_lockscreen_parent_class)->configured (layer_surface);
+ }
+ 
 diff --git a/src/meson.build b/src/meson.build
 index 7e11919..160127d 100644
 --- a/src/meson.build
@@ -1120,10 +1296,10 @@ index 9ddb87d..3b9ddd2 100644
   * phosh_shell_get_mode_manager:
   * @self: The shell singleton
 diff --git a/src/stylesheet/common.css b/src/stylesheet/common.css
-index 6655188..4781d6d 100644
+index 6655188..f815bad 100644
 --- a/src/stylesheet/common.css
 +++ b/src/stylesheet/common.css
-@@ -1288,3 +1288,25 @@ levelbar trough {
+@@ -1288,3 +1288,34 @@ levelbar trough {
  calendar:selected {
    background-color: @theme_selected_bg_color;
  }
@@ -1148,4 +1324,13 @@ index 6655188..4781d6d 100644
 +  min-height: 56px;
 +  padding: 0;
 +  border-radius: 28px;
++}
++
++/* L16: the lock screen's keypad on a 432 px display (250 %) */
++.phosh-lockscreen-tight phosh-keypad button {
++  padding: 2px 8px;
++}
++
++.phosh-lockscreen-tight phosh-keypad label.digit {
++  font-size: 150%;
 +}
