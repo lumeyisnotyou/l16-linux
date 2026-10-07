@@ -181,8 +181,8 @@ phosh() {
 	install_if="$pkgname=$pkgver-r$pkgrel postmarketos-ui-phosh"
 	replaces="phosh"
 	# greetd: the post-install configures its user; light-lfc-rotate: monitor-sensor,
-	# wlr-randr; light-lfc-shutter: gdbus (glib-bin), python3
-	depends="glib-bin greetd iio-sensor-proxy l16-phosh-plugins python3 wlr-randr"
+	# wlr-randr; light-lfc-shutter: gdbus (glib), python3
+	depends="glib greetd iio-sensor-proxy l16-phosh-plugins python3 wlr-randr"
 	install="$subpkgname.post-install $subpkgname.post-upgrade"
 
 	# landscape (kernel panel orientation) at 2x (250 % is wanted: see todo/README.md)
