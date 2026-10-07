@@ -200,10 +200,10 @@ index 0000000..5bf6b86
 +G_END_DECLS
 diff --git a/src/lockscreen-camera-manager.c b/src/lockscreen-camera-manager.c
 new file mode 100644
-index 0000000..6a035d3
+index 0000000..89e522b
 --- /dev/null
 +++ b/src/lockscreen-camera-manager.c
-@@ -0,0 +1,632 @@
+@@ -0,0 +1,631 @@
 +/*
 + * Copyright (C) 2026 lumey
 + *
@@ -230,7 +230,8 @@ index 0000000..6a035d3
 + * (L16 downstream) Opens the default camera: normally when the device is unlocked, and over
 + * the lock screen when it is locked. The shell stays locked the whole time; the lock screen
 + * only steps aside while the camera's fullscreen window is up, and comes back the moment the
-+ * camera closes, loses the front, another window appears, or the screen blanks.
++ * camera closes, loses the front or another window appears. The screen blanking (the power
++ * button) does not end it: the camera sleeps with the screen and is there again on waking.
 + * Whatever goes wrong, the result is the lock screen.
 + */
 +
@@ -539,12 +540,10 @@ index 0000000..6a035d3
 +  if (self->state == STATE_IDLE)
 +    return;
 +
-+  /* unlocked at any point, blanked once over the lock (while it is still launching the screen may
-+   * be coming on: the window is checked against it when it comes) */
++  /* unlocked at any point. A blank (the power button) does not end the camera over the lock: it
++   * sleeps with the screen, and is there again on waking */
 +  if (!phosh_shell_get_locked (shell))
 +    recover (self, "unlocked");
-+  else if (self->state == STATE_OVER_LOCK && phosh_shell_get_blanked (shell))
-+    recover (self, "screen blanked");
 +}
 +
 +
