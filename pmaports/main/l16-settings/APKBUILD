@@ -4,7 +4,7 @@
 # l16-settings/ into $pkgname-src.tar.gz here).
 pkgname=l16-settings
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Settings for the Light L16's own apps, and their shared gsettings schema"
 url="https://github.com/artillect/l16-linux"
 arch="aarch64"
@@ -35,5 +35,5 @@ package() {
 	install -Dm644 org.l16linux.gschema.xml -t "$pkgdir"/usr/share/glib-2.0/schemas
 }
 sha512sums="
-64397f497d47ef1565e6e8e9ff6412e826738309828925f8f4e950312882d30219a96cb099b29baf2b1efdc0f32707d6784bbd7d369d3c778de1d8ca0915f828  l16-settings-src.tar.gz
+9ef91dabd9fc3f89a55d530b27d430bdc03f04ecfee812c85d8005e7c1f2d87c14f9601e088a06fe66c7ff37d7c6b432424f1f3421ee4b68726394dce7887526  l16-settings-src.tar.gz
 "
